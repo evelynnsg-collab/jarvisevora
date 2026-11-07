@@ -228,18 +228,28 @@ async function fetchTts(text) {
 }
 
 function ttsChunks(text) {
-  // O primeiro pedaço é só a primeira frase (curta = a voz começa mais cedo);
-  // os seguintes têm até ~400 caracteres e são gerados enquanto o anterior toca.
+  // Cada pedaço é um pedido à cota de voz do Gemini, então usamos o mínimo possível:
+  // respostas normais (curtas) vão num pedido só; textos longos em pedaços grandes.
+  if (text.length <= 700) return [text];
   const out = [];
   let cur = "";
   for (const s of chunk(text)) {
-    const limit = out.length === 0 ? 140 : 400;
-    if ((cur + " " + s).length > limit && cur) { out.push(cur.trim()); cur = ""; }
+    if ((cur + " " + s).length > 900 && cur) { out.push(cur.trim()); cur = ""; }
     cur += " " + s;
-    if (out.length === 0 && /[.!?]\s*$/.test(cur) && cur.length > 25) { out.push(cur.trim()); cur = ""; }
   }
   if (cur.trim()) out.push(cur.trim());
   return out;
+}
+
+// Áudios já gerados nesta visita (ex.: "Testar voz") não gastam cota de novo.
+const ttsCache = new Map();
+async function fetchTtsCached(text) {
+  if (ttsCache.has(text)) return ttsCache.get(text);
+  const p = fetchTts(text);
+  ttsCache.set(text, p);
+  p.catch(() => ttsCache.delete(text));
+  if (ttsCache.size > 30) ttsCache.delete(ttsCache.keys().next().value);
+  return p;
 }
 
 function playBuffer(buffer, token) {
@@ -255,31 +265,44 @@ function playBuffer(buffer, token) {
   });
 }
 
+// A voz é sempre a mesma (Jarvis). Se o Gemini não conseguir gerar o áudio
+// (cota ou instabilidade), a resposta fica só em texto — nunca troca de voz.
 let ttsWarned = false;
+let ttsDownUntil = 0;
 async function jarvisSpeak(text, token) {
   const clean = speechText(text);
-  if (!clean || !ensureAudio()) return browserSpeak(text, { male: true });
+  if (!clean || !ensureAudio()) return;
+  if (Date.now() < ttsDownUntil) return; // voz fora do ar há pouco: não atrasa a conversa
   const parts = ttsChunks(clean);
   setState("thinking");
-  let pending = fetchTts(parts[0]);
+  let pending = fetchTtsCached(parts[0]);
   for (let i = 0; i < parts.length; i++) {
     let buffer;
     try {
       buffer = await pending;
     } catch {
       if (token.cancelled) return;
-      if (!ttsWarned) {
-        ttsWarned = true;
-        addMessage("system", "A voz do Gemini não respondeu agora (provavelmente cota). Usando a voz do navegador por enquanto.");
+      // uma nova tentativa rápida, para falhas momentâneas
+      try {
+        await new Promise((r) => setTimeout(r, 1200));
+        if (token.cancelled) return;
+        buffer = await fetchTtsCached(parts[i]);
+      } catch {
+        ttsDownUntil = Date.now() + 5 * 60 * 1000;
+        if (!ttsWarned) {
+          ttsWarned = true;
+          addMessage("system", "A voz da Evora está sem cota no Gemini agora. As respostas aparecem só em texto até a voz voltar; ela tenta de novo a cada 5 minutos.");
+        }
+        return;
       }
-      return browserSpeak(parts.slice(i).join(" "), { male: true });
     }
     if (token.cancelled) return;
-    if (i + 1 < parts.length) pending = fetchTts(parts[i + 1]);
+    if (i + 1 < parts.length) pending = fetchTtsCached(parts[i + 1]);
     setState("speaking");
     await playBuffer(buffer, token);
     if (token.cancelled) return;
   }
+  ttsWarned = false;
 }
 
 async function speak(text) {
