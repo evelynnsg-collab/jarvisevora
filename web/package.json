@@ -1,0 +1,8 @@
+{
+  "name": "evora-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Evora — assistente de voz na web (Gemini)",
+  "engines": { "node": ">=20" }
+}

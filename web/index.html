@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Evora — assistente de voz</title>
+  <meta name="description" content="Evora, sua assistente de voz em português." />
+  <meta name="theme-color" content="#050b16" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='26' fill='none' stroke='%2353e0ff' stroke-width='5'/%3E%3Ccircle cx='32' cy='32' r='10' fill='%2353e0ff'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="grid-bg" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">EVORA</span>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite">
+      <span class="dot"></span><span id="statusText">Iniciando…</span>
+    </div>
+    <button class="icon-btn" id="settingsBtn" aria-label="Configurações" aria-expanded="false" aria-controls="settings">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.5 7.5 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.6 7.6 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.6 7.6 0 0 0-1.7 1l-2.4-1-2 3.4L4.6 11a7.5 7.5 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.6 7.6 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.6 7.6 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)"/></svg>
+    </button>
+  </header>
+
+  <main class="stage">
+    <section class="holo-wrap" aria-label="Evora">
+      <canvas id="holo" aria-hidden="true"></canvas>
+      <div class="holo-label">EVORA</div>
+    </section>
+
+    <section class="log" id="log" aria-live="polite" aria-label="Conversa"></section>
+  </main>
+
+  <footer class="composer">
+    <button class="mic" id="micBtn" aria-label="Falar com a Evora" title="Toque para falar">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 1 0-7 0v6A3.5 3.5 0 0 0 12 15Zm6-3.5a6 6 0 0 1-12 0H4.2a7.8 7.8 0 0 0 6.9 7.7V22h1.8v-2.8a7.8 7.8 0 0 0 6.9-7.7H18Z"/></svg>
+    </button>
+    <form class="input-row" id="form" autocomplete="off">
+      <input id="input" type="text" placeholder="Digite ou toque no microfone…" aria-label="Mensagem para a Evora" maxlength="4000" />
+      <button type="submit" class="send" aria-label="Enviar">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3.3 10l12.6 2-12.6 2z"/></svg>
+      </button>
+    </form>
+  </footer>
+
+  <aside class="settings" id="settings" hidden>
+    <h2>Configurações</h2>
+    <label class="field">
+      <span>Voz</span>
+      <select id="voiceSelect"></select>
+    </label>
+    <label class="field">
+      <span>Velocidade da fala <output id="rateOut">1.0</output></span>
+      <input type="range" id="rate" min="0.7" max="1.4" step="0.05" value="1" />
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="speakToggle" checked />
+      <span>Responder em voz alta</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="convoToggle" />
+      <span>Modo conversa (volta a ouvir depois de responder)</span>
+    </label>
+    <div class="settings-actions">
+      <button class="ghost" id="testVoice" type="button">Testar voz</button>
+      <button class="ghost danger" id="clearBtn" type="button">Limpar conversa</button>
+    </div>
+    <p class="hint" id="supportHint"></p>
+  </aside>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
