@@ -251,7 +251,7 @@ async function send(text) {
     if (!res.ok) {
       history.pop();
       store.set("evora.history", history);
-      addMessage("system error", data.error || `Erro ${res.status}.`);
+      addMessage("system error", (data.error || `Erro ${res.status}.`) + (data.detail ? `\nDetalhe do Google: ${data.detail}` : ""));
       setState(data.code === "NO_KEY" ? "offline" : "error");
       busy = false;
       return;

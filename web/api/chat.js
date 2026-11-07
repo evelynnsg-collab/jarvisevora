@@ -107,6 +107,7 @@ export default async function handler(req, res) {
   ].filter((a, i, all) => all.findIndex((b) => b.model === a.model && b.useSearch === a.useSearch) === i);
 
   let last = null;
+  let quota = null; // guarda o erro de cota, se algum modelo recusou por isso
   try {
     for (const a of attempts) {
       const out = await callGemini({ apiKey, system, contents, ...a });
@@ -117,12 +118,16 @@ export default async function handler(req, res) {
         continue;
       }
       last = out;
-      if (![400, 404, 429].includes(out.status)) break; // chave inválida, erro do Google etc.
+      if (out.status === 429) quota = out;
+      console.error(`[evora] ${a.model}${a.useSearch ? "+search" : ""} -> ${out.status}: ${out.data?.error?.message || ""}`);
+      // 401/403 = problema da chave: não adianta trocar de modelo.
+      if (out.status === 401 || out.status === 403) break;
     }
   } catch {
     return json(res, 502, { error: "Falha ao falar com o Gemini. Tente de novo em instantes." });
   }
 
+  if (quota && last?.status !== 401 && last?.status !== 403) last = quota;
   const raw = last?.data?.error?.message || "";
   if (last?.status === 429) {
     return json(res, 429, {
@@ -138,5 +143,8 @@ export default async function handler(req, res) {
   if (last?.status === 403) {
     return json(res, 403, { error: "A chave do Gemini não tem permissão para esse uso.", detail: raw });
   }
-  return json(res, 502, { error: "O Gemini não respondeu.", detail: raw });
+  return json(res, 502, {
+    error: `O Gemini não respondeu (erro ${last?.status || "?"}). Tente de novo em instantes.`,
+    detail: raw,
+  });
 }
