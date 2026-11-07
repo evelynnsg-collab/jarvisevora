@@ -53,10 +53,20 @@ const STATUS = {
   offline: "Sem chave",
 };
 let state = "idle";
+const CMD = {
+  idle: "EVORA PRONTA",
+  listening: "OUVINDO…",
+  thinking: "PROCESSANDO…",
+  speaking: "FALANDO…",
+  error: "VERIFICAR",
+  offline: "SEM CHAVE",
+};
 function setState(s, label) {
   state = s;
   els.body.dataset.state = s === "offline" ? "error" : s;
   els.statusText.textContent = label || STATUS[s] || s;
+  const cmd = $("cmdState");
+  if (cmd) cmd.textContent = label && s !== "idle" ? label.toUpperCase() : CMD[s] || s.toUpperCase();
 }
 
 // ── Conversa na tela ──────────────────────────────────────────────────────
@@ -315,6 +325,7 @@ function startListening() {
   recog.onerror = (e) => {
     if (e.error === "not-allowed" || e.error === "service-not-allowed") {
       addMessage("system error", "O microfone foi bloqueado. Libere o acesso no cadeado da barra de endereço.");
+      sys.mic = false; refreshSystem();
     } else if (e.error === "no-speech") {
       // silêncio: só volta ao normal
     } else if (e.error !== "aborted") {
@@ -346,6 +357,7 @@ async function send(text) {
   store.set("evora.history", history);
   addMessage("user", text);
   setState("thinking");
+  const t0 = performance.now();
 
   try {
     const res = await fetch("/api/chat", {
@@ -374,6 +386,7 @@ async function send(text) {
       return;
     }
 
+    recordPerf(performance.now() - t0);
     history.push({ role: "model", text: data.text });
     if (history.length > 60) history = history.slice(-60);
     store.set("evora.history", history);
@@ -434,7 +447,7 @@ const holo = (() => {
     api.level *= 0.94;
 
     ctx.clearRect(0, 0, w, h);
-    const R = Math.min(w, h) * 0.36;
+    const R = Math.min(w, h) * 0.34;
     ctx.save();
     ctx.translate(w / 2, h / 2);
     ctx.shadowColor = "#53e0ff";
@@ -459,6 +472,19 @@ const holo = (() => {
     ctx.save(); ctx.rotate(t * 0.18 * spin);
     arc(R * 1.18, 0, Math.PI * 0.5, 1.5, 0.4);
     arc(R * 1.18, Math.PI, Math.PI * 0.7, 1.5, 0.25);
+    ctx.restore();
+    // arcos laranja externos, como no painel
+    ctx.save(); ctx.rotate(-t * 0.12 * spin);
+    ctx.shadowColor = "#ffa53a";
+    for (const [a0, len] of [[0.15, 0.55], [Math.PI * 0.9, 0.35], [Math.PI * 1.45, 0.25]]) {
+      ctx.beginPath(); ctx.arc(0, 0, R * 1.3, a0, a0 + len);
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(255,165,58,.7)"; ctx.stroke();
+    }
+    ctx.shadowColor = "#53e0ff";
+    ctx.restore();
+    // anel tracejado externo
+    ctx.save(); ctx.rotate(t * 0.05);
+    ctx.setLineDash([2, 9]); arc(R * 1.42, 0, Math.PI * 2, 2, 0.35); ctx.setLineDash([]);
     ctx.restore();
 
     // barras de áudio em volta
@@ -544,12 +570,12 @@ els.styleSelect.value = prefs.style;
 els.fxToggle.checked = prefs.fx;
 function syncStyleUi() { $("voiceField").style.display = prefs.style === "browser" ? "" : "none"; }
 syncStyleUi();
-els.styleSelect.addEventListener("change", () => { prefs.style = els.styleSelect.value; ttsWarned = false; syncStyleUi(); savePrefs(); });
+els.styleSelect.addEventListener("change", () => { prefs.style = els.styleSelect.value; ttsWarned = false; syncStyleUi(); savePrefs(); refreshSystem(); });
 els.fxToggle.addEventListener("change", () => { prefs.fx = els.fxToggle.checked; savePrefs(); });
 els.speakToggle.checked = prefs.speak;
 els.speakToggle.addEventListener("change", () => { prefs.speak = els.speakToggle.checked; if (!prefs.speak) stopSpeaking(); savePrefs(); });
 els.convoToggle.checked = prefs.convo;
-els.convoToggle.addEventListener("change", () => { prefs.convo = els.convoToggle.checked; savePrefs(); });
+els.convoToggle.addEventListener("change", () => { prefs.convo = els.convoToggle.checked; savePrefs(); refreshSystem(); });
 els.testVoice.addEventListener("click", async () => {
   const was = prefs.speak; prefs.speak = true;
   ensureAudio();
@@ -583,6 +609,8 @@ if (!history.length) addMessage("system", "Toque no microfone ou digite para fal
 fetch("/api/chat")
   .then((r) => r.json())
   .then((info) => {
+    sys.gemini = Boolean(info.configured);
+    refreshSystem();
     if (!info.configured) {
       setState("offline");
       addMessage("system error", "A Evora ainda não tem a chave do Gemini. Adicione GEMINI_API_KEY nas variáveis de ambiente do projeto no Vercel e faça um novo deploy.");
@@ -591,3 +619,148 @@ fetch("/api/chat")
     }
   })
   .catch(() => setState("idle"));
+
+
+// ── Painel (relógio, menu, status, módulos, desempenho, onda) ──────────────
+const clockEl = $("clock");
+function tick() {
+  clockEl.textContent = new Date().toLocaleTimeString("pt-BR", { hour12: false });
+}
+tick();
+setInterval(tick, 1000);
+
+document.querySelectorAll(".menu button[data-action]").forEach((btn) => {
+  if (btn.id === "settingsBtn") return;
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".menu button").forEach((b) => b.classList.toggle("active", b === btn));
+    const action = btn.dataset.action;
+    if (action === "assistente") { ensureAudio(); els.mic.click(); return; }
+    if (btn.dataset.prompt) {
+      els.input.value = btn.dataset.prompt;
+      els.input.focus();
+      els.input.setSelectionRange(els.input.value.length, els.input.value.length);
+      return;
+    }
+    els.log.scrollTop = els.log.scrollHeight;
+    els.input.focus();
+  });
+});
+
+const sys = { gemini: null, mic: Boolean(SR), rede: navigator.onLine };
+let storageOk = true;
+try { localStorage.setItem("evora.t", "1"); localStorage.removeItem("evora.t"); } catch { storageOk = false; }
+
+function refreshSystem() {
+  const voiceOk = prefs.style === "jarvis" ? sys.gemini !== false : Boolean(synth);
+  const rows = {
+    gemini: sys.gemini == null ? null : sys.gemini,
+    voz: voiceOk,
+    mic: sys.mic,
+    rede: sys.rede,
+  };
+  let ok = 0, total = 0;
+  document.querySelectorAll("#sysBars li").forEach((li) => {
+    const v = rows[li.dataset.key];
+    const known = v !== null;
+    li.classList.toggle("off", known && !v);
+    li.querySelector("b").style.width = !known ? "30%" : v ? "100%" : "12%";
+    li.querySelector("em").textContent = !known ? "…" : v ? "OK" : "OFF";
+    if (known) { total++; if (v) ok++; }
+  });
+  const pct = total ? Math.round((ok / total) * 100) : 0;
+  $("gauge").style.setProperty("--p", pct);
+  $("gaugeVal").textContent = `${pct}%`;
+  const label = $("sysLabel");
+  label.textContent = !total ? "Verificando" : pct === 100 ? "Operacional" : pct >= 50 ? "Parcial" : "Atenção";
+  label.classList.toggle("warn", total > 0 && pct < 100);
+
+  const mods = [
+    ["IA conversacional", sys.gemini !== false],
+    ["Pesquisa na web", sys.gemini !== false],
+    [prefs.style === "jarvis" ? "Voz Jarvis" : "Voz do navegador", voiceOk],
+    ["Fala pelo microfone", sys.mic],
+    ["Modo conversa", prefs.convo],
+    ["Memória da conversa", storageOk],
+    ["Análise de dados", sys.gemini !== false],
+  ];
+  $("modules").innerHTML = mods
+    .map(([name, on]) => `<li class="${on ? "" : "off"}">${escapeHtml(name)}</li>`)
+    .join("");
+}
+window.addEventListener("online", () => { sys.rede = true; refreshSystem(); });
+window.addEventListener("offline", () => { sys.rede = false; refreshSystem(); });
+refreshSystem();
+
+// Desempenho: tempo real das últimas respostas da IA.
+const perfData = store.get("evora.perf", []);
+function recordPerf(ms) {
+  perfData.push(Math.round(ms));
+  while (perfData.length > 16) perfData.shift();
+  store.set("evora.perf", perfData);
+  drawPerf();
+}
+function drawPerf() {
+  const c = $("perf");
+  if (!c || !c.offsetParent) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = "rgba(83,224,255,.12)"; ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) { const y = (h * i) / 4; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+  const note = $("perfNote");
+  if (!perfData.length) { note.textContent = "Aguardando a primeira resposta."; return; }
+  const max = Math.max(...perfData, 2000);
+  const n = 16, bw = w / n;
+  perfData.forEach((v, i) => {
+    const bh = Math.max(3, (v / max) * (h - 10));
+    const x = (n - perfData.length + i) * bw;
+    const g = ctx.createLinearGradient(0, h - bh, 0, h);
+    g.addColorStop(0, "rgba(83,224,255,.9)"); g.addColorStop(1, "rgba(83,224,255,.15)");
+    ctx.fillStyle = g;
+    ctx.fillRect(x + 2, h - bh, bw - 4, bh);
+  });
+  ctx.beginPath();
+  perfData.forEach((v, i) => {
+    const x = (n - perfData.length + i) * bw + bw / 2;
+    const y = h - Math.max(3, (v / max) * (h - 10));
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.strokeStyle = "#ffa53a"; ctx.lineWidth = 1.6; ctx.stroke();
+  const last = perfData[perfData.length - 1];
+  const avg = perfData.reduce((a, b) => a + b, 0) / perfData.length;
+  note.textContent = `Última: ${(last / 1000).toFixed(1)} s · média: ${(avg / 1000).toFixed(1)} s`;
+}
+window.addEventListener("resize", drawPerf);
+drawPerf();
+
+// Onda de áudio da barra de comando.
+(() => {
+  const c = $("wave");
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  let t = 0;
+  function frame() {
+    t += 1 / 60;
+    if (c.offsetParent) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = c.clientWidth, h = c.clientHeight;
+      if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const N = 34, gap = w / N;
+      const lvl = Math.max(holo.level, state === "listening" ? 0.25 : 0.06);
+      for (let i = 0; i < N; i++) {
+        const env = Math.sin((i / (N - 1)) * Math.PI);
+        const amp = env * (0.15 + lvl * Math.abs(Math.sin(i * 1.9 + t * 8)) * 0.85);
+        const bh = Math.max(2, amp * (h - 14));
+        ctx.fillStyle = `rgba(83,224,255,${0.4 + amp * 0.6})`;
+        ctx.fillRect(i * gap + gap * 0.3, (h - bh) / 2, gap * 0.4, bh);
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
