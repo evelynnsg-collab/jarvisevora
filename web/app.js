@@ -37,7 +37,7 @@ const store = {
 };
 
 const prefs = Object.assign(
-  { voice: "", rate: 1, speak: true, convo: false, style: "jarvis", fx: true },
+  { voice: "", rate: 1, speak: true, handsFree: true, style: "jarvis", fx: true },
   store.get("evora.prefs", {})
 );
 let history = store.get("evora.history", []);
@@ -66,7 +66,7 @@ function setState(s, label) {
   els.body.dataset.state = s === "offline" ? "error" : s;
   els.statusText.textContent = label || STATUS[s] || s;
   const cmd = $("cmdState");
-  if (cmd) cmd.textContent = label && s !== "idle" ? label.toUpperCase() : CMD[s] || s.toUpperCase();
+  if (cmd) cmd.textContent = label ? label.toUpperCase() : CMD[s] || s.toUpperCase();
 }
 
 // ── Conversa na tela ──────────────────────────────────────────────────────
@@ -328,14 +328,17 @@ function startListening() {
       els.log.scrollTop = els.log.scrollHeight;
     }
   };
+  let retryDelay = 250;
   recog.onerror = (e) => {
     if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-      addMessage("system error", "O microfone foi bloqueado. Libere o acesso no cadeado da barra de endereço.");
+      addMessage("system error", "O microfone foi bloqueado. Libere o acesso no cadeado da barra de endereço e recarregue a página.");
+      micBlocked = true;
       sys.mic = false; refreshSystem();
-    } else if (e.error === "no-speech") {
-      // silêncio: só volta ao normal
-    } else if (e.error !== "aborted") {
-      addMessage("system error", `Não consegui ouvir (${e.error}).`);
+    } else if (e.error === "no-speech" || e.error === "aborted") {
+      // silêncio ou interrupção: o ciclo mãos-livres volta a ouvir
+    } else {
+      retryDelay = 2000; // rede/áudio: espera um pouco antes de tentar de novo
+      if (e.error !== "network") addMessage("system error", `Não consegui ouvir (${e.error}).`);
     }
   };
   recog.onend = () => {
@@ -343,12 +346,40 @@ function startListening() {
     if (interimEl) { interimEl.remove(); interimEl = null; }
     const text = finalText.trim();
     if (text) send(text);
-    else if (state === "listening") setState("idle");
+    else {
+      // no mãos-livres o status continua "ouvindo" entre um reinício e outro
+      if (state === "listening" && !loopActive()) setState("idle");
+      keepListening(retryDelay);
+    }
   };
   try { recog.start(); } catch { setState("idle"); }
 }
 function stopListening() {
   if (recog) recog.stop();
+}
+
+// ── Mãos-livres (AUTO-START) ───────────────────────────────────────────────
+// Depois de ativada, a Evora fica num ciclo: ouve → pensa → fala → volta a ouvir.
+// O microfone fica fechado enquanto ela fala, para não ouvir a própria voz.
+let armed = false;      // o navegador exige um toque antes de liberar áudio e microfone
+let paused = false;     // microfone pausado pelo usuário
+let micBlocked = false;
+let loopTimer = null;
+function loopActive() {
+  return armed && prefs.handsFree && !paused && !micBlocked && Boolean(SR);
+}
+function keepListening(delay = 250) {
+  clearTimeout(loopTimer);
+  if (!loopActive()) return;
+  loopTimer = setTimeout(() => {
+    if (loopActive() && !recog && !busy && state !== "speaking" && state !== "thinking") startListening();
+  }, delay);
+}
+function arm() {
+  if (armed) return;
+  armed = true;
+  ensureAudio();
+  document.getElementById("activate")?.remove();
 }
 
 // ── Conversa com o servidor ───────────────────────────────────────────────
@@ -389,6 +420,7 @@ async function send(text) {
       addMessage("system error", (data.error || `Erro ${res.status}.`) + (data.detail ? `\nDetalhe do Google: ${data.detail}` : ""));
       setState(data.code === "NO_KEY" ? "offline" : "error");
       busy = false;
+      if (data.code !== "NO_KEY") keepListening(3000);
       return;
     }
 
@@ -398,16 +430,31 @@ async function send(text) {
     store.set("evora.history", history);
     addMessage("model", data.text);
     busy = false;
+    showSources(data);
     await speak(data.text);
-    setState("idle");
-    if (prefs.convo && SR && state === "idle") startListening();
+    if (state === "speaking" || state === "thinking") setState("idle");
+    keepListening(150);
   } catch {
     history.pop();
     store.set("evora.history", history);
     addMessage("system error", "Sem conexão com o servidor. Verifique a internet e tente de novo.");
     setState("error");
     busy = false;
+    keepListening(3000);
   }
+}
+
+function showSources(data) {
+  if (!data || (!data.queries?.length && !data.sources?.length)) return;
+  const div = document.createElement("div");
+  div.className = "msg search";
+  const q = (data.queries || []).join(" · ");
+  const links = (data.sources || [])
+    .map((s) => `<a href="${escapeHtml(s.uri)}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.title || "fonte")}</a>`)
+    .join("");
+  div.innerHTML = `<b>PESQUISA${q ? " — " + escapeHtml(q.toUpperCase()) : ""}</b>${links ? `<span class="links">${links}</span>` : ""}`;
+  els.log.appendChild(div);
+  els.log.scrollTop = els.log.scrollHeight;
 }
 
 // ── Holograma ─────────────────────────────────────────────────────────────
@@ -452,46 +499,56 @@ const holo = (() => {
     api.level *= 0.94;
 
     ctx.clearRect(0, 0, w, h);
-    // O anel já está desenhado na imagem: aqui só entra a camada que reage.
+    // Mesmo desenho da Evora de desktop (core/evora_hologram.py):
+    // escurece o anel estático da imagem e desenha por cima anéis segmentados
+    // girando em sentidos opostos, mais o espectro de áudio da voz.
     const half = Math.min(w, h) / 2;
+    const R = half * 0.72;
+    const amp = speaking ? api.level : 0;
     ctx.save();
     ctx.translate(w / 2, h / 2);
 
-    // brilho do núcleo
-    const lvl = api.level + (listening ? 0.12 : 0);
-    if (lvl > 0.01) {
-      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, half * 0.62);
-      glow.addColorStop(0, `rgba(120,230,255,${0.08 + lvl * 0.3})`);
-      glow.addColorStop(1, "rgba(83,224,255,0)");
-      ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(0, 0, half * 0.62, 0, Math.PI * 2); ctx.fill();
-    }
+    const shade = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 1.12);
+    shade.addColorStop(0, "rgba(0,13,27,.55)");
+    shade.addColorStop(0.76, "rgba(0,15,32,.5)");
+    shade.addColorStop(1, "rgba(0,16,30,0)");
+    ctx.fillStyle = shade;
+    ctx.beginPath(); ctx.arc(0, 0, R * 1.12, 0, Math.PI * 2); ctx.fill();
 
-    // barras de áudio em volta do anel
-    ctx.shadowColor = "#53e0ff"; ctx.shadowBlur = 10;
-    for (let i = 0; i < BARS; i++) {
-      const target = api.level * (0.35 + 0.65 * Math.abs(Math.sin(i * 1.7 + t * 9))) + (listening ? 0.1 : 0);
-      bars[i] += (target - bars[i]) * 0.25;
-      if (bars[i] < 0.02) continue;
-      const a = (i / BARS) * Math.PI * 2 - Math.PI / 2;
-      const r0 = half * 0.86;
-      const r1 = r0 + bars[i] * half * 0.13;
+    const alpha = state === "error" ? 0.45 : 0.9;
+    const tint = thinking ? `rgba(255,165,58,${alpha})` : `rgba(50,205,255,${alpha})`;
+    ctx.shadowColor = thinking ? "#ffa53a" : "#32cdff";
+    ctx.shadowBlur = 8;
+    const speed = thinking ? 2.2 : listening ? 1.4 : 1;
+    [[1.0, 1, 9], [0.87, -1, 6], [0.73, 1, 4]].forEach(([frac, dir, segs], idx) => {
+      const ring = R * frac * (1 + amp * 0.035);
+      const angle = ((t * speed * (20 + idx * 12) * dir) * Math.PI) / 180;
+      const gapRad = (12 * Math.PI) / 180;
+      ctx.lineWidth = Math.max(1.2, h * 0.004 + amp * 2.5);
+      ctx.strokeStyle = tint;
+      for (let k = 0; k < segs; k++) {
+        const start = angle + (k * Math.PI * 2) / segs;
+        ctx.beginPath();
+        ctx.arc(0, 0, ring, start, start + (Math.PI * 2) / segs - gapRad);
+        ctx.stroke();
+      }
+    });
+
+    // espectro radial (por fora do anel, para não cobrir o nome)
+    ctx.strokeStyle = "rgb(110,235,255)";
+    ctx.lineWidth = Math.max(1.2, h * 0.004);
+    const N = 64;
+    for (let i = 0; i < N; i++) {
+      const a = (i * Math.PI * 2) / N;
+      const pattern = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(i * 1.7 + t * 8));
+      const target = amp * pattern + (listening ? 0.05 + 0.04 * Math.sin(t * 4 + i) : 0);
+      bars[i % BARS] += (target - bars[i % BARS]) * 0.3;
+      const inner = R * 1.06;
+      const outer = inner + R * (0.025 + bars[i % BARS] * 0.26);
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
-      ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
-      ctx.lineWidth = Math.max(1.5, half * 0.012);
-      ctx.strokeStyle = `rgba(110,235,255,${0.35 + bars[i] * 0.65})`;
+      ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
+      ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
       ctx.stroke();
-    }
-
-    // anel que gira enquanto ouve ou pensa
-    if (listening || thinking) {
-      ctx.rotate(t * (thinking ? 2.6 : 1.2));
-      ctx.lineWidth = Math.max(2, half * 0.014);
-      ctx.strokeStyle = thinking ? "rgba(255,165,58,.85)" : "rgba(83,224,255,.85)";
-      ctx.shadowColor = thinking ? "#ffa53a" : "#53e0ff";
-      ctx.beginPath(); ctx.arc(0, 0, half * 0.8, 0, Math.PI * 0.45); ctx.stroke();
-      ctx.beginPath(); ctx.arc(0, 0, half * 0.8, Math.PI, Math.PI * 1.45); ctx.stroke();
     }
     ctx.restore();
     requestAnimationFrame(frame);
@@ -506,6 +563,8 @@ const holo = (() => {
 els.form.addEventListener("submit", (e) => {
   e.preventDefault();
   ensureAudio();
+  if (!armed) arm();
+  if (recog) recog.abort();
   const text = els.input.value;
   els.input.value = "";
   send(text);
@@ -513,6 +572,15 @@ els.form.addEventListener("submit", (e) => {
 
 els.mic.addEventListener("click", () => {
   ensureAudio();
+  if (!armed) { arm(); paused = false; startListening(); return; }
+  if (prefs.handsFree) {
+    // no modo mãos-livres o botão liga/desliga o microfone
+    if (state === "speaking") { stopSpeaking(); setState("idle"); paused = false; startListening(); return; }
+    paused = !paused;
+    if (paused) { clearTimeout(loopTimer); if (recog) recog.abort(); setState("idle", "MIC PAUSADO"); }
+    else startListening();
+    return;
+  }
   if (state === "listening") stopListening();
   else if (state === "speaking") { stopSpeaking(); setState("idle"); startListening(); }
   else if (!busy) startListening();
@@ -556,8 +624,12 @@ els.styleSelect.addEventListener("change", () => { prefs.style = els.styleSelect
 els.fxToggle.addEventListener("change", () => { prefs.fx = els.fxToggle.checked; savePrefs(); });
 els.speakToggle.checked = prefs.speak;
 els.speakToggle.addEventListener("change", () => { prefs.speak = els.speakToggle.checked; if (!prefs.speak) stopSpeaking(); savePrefs(); });
-els.convoToggle.checked = prefs.convo;
-els.convoToggle.addEventListener("change", () => { prefs.convo = els.convoToggle.checked; savePrefs(); refreshSystem(); });
+els.convoToggle.checked = prefs.handsFree;
+els.convoToggle.addEventListener("change", () => {
+  prefs.handsFree = els.convoToggle.checked;
+  savePrefs(); refreshSystem();
+  if (prefs.handsFree) { paused = false; keepListening(); } else { clearTimeout(loopTimer); if (recog) recog.abort(); }
+});
 els.testVoice.addEventListener("click", async () => {
   const was = prefs.speak; prefs.speak = true;
   ensureAudio();
@@ -586,7 +658,16 @@ els.hint.textContent = missing.length
   : "Dica: a barra de espaço abre o microfone; Esc interrompe a fala.";
 
 renderHistory();
-if (!history.length) addMessage("system", "Toque no microfone ou digite para falar com a Evora.");
+if (SR && prefs.handsFree) {
+  const btn = document.createElement("button");
+  btn.id = "activate";
+  btn.type = "button";
+  btn.className = "activate";
+  btn.innerHTML = "<span>▶</span> ATIVAR EVORA<small>toque para ligar o microfone e a voz</small>";
+  btn.addEventListener("click", () => { arm(); paused = false; startListening(); });
+  ($("screen") || document.body).appendChild(btn);
+}
+if (!history.length) addMessage("system", SR && prefs.handsFree ? "Toque em ATIVAR EVORA e fale normalmente: ela ouve, responde e volta a ouvir sozinha." : "Toque no microfone ou digite para falar com a Evora.");
 
 fetch("/api/chat")
   .then((r) => r.json())
@@ -662,7 +743,7 @@ function refreshSystem() {
     ["Pesquisa na web", sys.gemini !== false],
     [prefs.style === "jarvis" ? "Voz Jarvis" : "Voz do navegador", voiceOk],
     ["Fala pelo microfone", sys.mic],
-    ["Modo conversa", prefs.convo],
+    ["Mãos-livres", prefs.handsFree],
     ["Memória da conversa", storageOk],
     ["Análise de dados", sys.gemini !== false],
   ];

@@ -57,6 +57,24 @@ function extractText(data) {
   return parts.map((p) => p.text || "").join("").trim();
 }
 
+// Pesquisas feitas pelo Gemini (Google Search) e as páginas usadas na resposta.
+function extractSources(data) {
+  const meta = data?.candidates?.[0]?.groundingMetadata;
+  if (!meta) return {};
+  const queries = (meta.webSearchQueries || []).filter((q) => typeof q === "string").slice(0, 3);
+  const seen = new Set();
+  const sources = [];
+  for (const c of meta.groundingChunks || []) {
+    const uri = c?.web?.uri;
+    const title = c?.web?.title || "";
+    if (!uri || !/^https?:\/\//.test(uri) || seen.has(title + uri)) continue;
+    seen.add(title + uri);
+    sources.push({ uri, title: title.slice(0, 120) });
+    if (sources.length >= 5) break;
+  }
+  return queries.length || sources.length ? { queries, sources } : {};
+}
+
 export default async function handler(req, res) {
   if (req.method === "GET") {
     return json(res, 200, {
@@ -113,7 +131,7 @@ export default async function handler(req, res) {
       const out = await callGemini({ apiKey, system, contents, ...a });
       if (out.ok) {
         const text = extractText(out.data);
-        if (text) return json(res, 200, { text, model: a.model, search: a.useSearch });
+        if (text) return json(res, 200, { text, model: a.model, search: a.useSearch, ...extractSources(out.data) });
         last = { status: 502, data: {} };
         continue;
       }
