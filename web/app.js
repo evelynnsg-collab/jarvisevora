@@ -474,15 +474,49 @@ function showSources(data) {
 
 // ── Holograma ─────────────────────────────────────────────────────────────
 const holo = (() => {
+  // Núcleo holográfico: luz aditiva, anéis finos, espectro real da voz e partículas.
   const c = els.canvas;
   const ctx = c.getContext("2d");
-  const BARS = 72;
-  const bars = new Float32Array(BARS);
-  let w = 0, h = 0, dpr = 1, t = 0;
+  let w = 0, h = 0, dpr = 1, t = 0, last = performance.now();
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const api = {
     level: 0,
     kick(amount = 1) { api.level = Math.min(1, api.level + 0.55 * amount); },
   };
+
+  const BINS = 96;
+  const spec = new Float32Array(BINS);
+  const freq = new Uint8Array(256);
+  const parts = [];
+  const MAX_PARTS = 900;
+
+  // sprite de brilho pré-desenhado (muito mais leve que shadowBlur em cada partícula)
+  const glowSprite = (() => {
+    const s = document.createElement("canvas");
+    s.width = s.height = 64;
+    const g = s.getContext("2d");
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, "rgba(235,252,255,1)");
+    grd.addColorStop(0.18, "rgba(150,235,255,.9)");
+    grd.addColorStop(0.45, "rgba(60,190,255,.35)");
+    grd.addColorStop(1, "rgba(30,140,255,0)");
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+    return s;
+  })();
+  const amberSprite = (() => {
+    const s = document.createElement("canvas");
+    s.width = s.height = 64;
+    const g = s.getContext("2d");
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, "rgba(255,245,220,1)");
+    grd.addColorStop(0.25, "rgba(255,180,80,.8)");
+    grd.addColorStop(1, "rgba(255,120,30,0)");
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 64, 64);
+    return s;
+  })();
+
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     const r = c.getBoundingClientRect();
@@ -490,81 +524,183 @@ const holo = (() => {
     c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  function arc(r, start, len, width, alpha) {
-    ctx.beginPath();
-    ctx.arc(0, 0, r, start, start + len);
-    ctx.lineWidth = width;
-    ctx.strokeStyle = `rgba(83,224,255,${alpha})`;
-    ctx.stroke();
+  function readSpectrum(speaking) {
+    let energy = 0;
+    if (speaking && currentSource && analyser) {
+      analyser.getByteFrequencyData(freq);
+      // bins de voz (~80 Hz a ~5 kHz), espelhados para o círculo ficar simétrico
+      const half = BINS / 2;
+      for (let i = 0; i < half; i++) {
+        // bandas embaralhadas pelo círculo, para a voz acender o anel todo e não só um lado
+        const band = (i * 13) % half;
+        const idx = 2 + Math.floor(Math.pow(band / half, 1.5) * 70);
+        const v = Math.min(1, (freq[idx] / 255) * (1 + 1.4 * (band / half)));
+        const target = Math.pow(v, 1.3);
+        spec[i] += (target - spec[i]) * (target > spec[i] ? 0.55 : 0.12);
+        spec[BINS - 1 - i] = spec[i];
+        energy += v;
+      }
+      energy = Math.min(1, (energy / half) * 1.9);
+    } else {
+      const fake = speaking ? 0.25 + 0.35 * Math.abs(Math.sin(t * 7.3) * Math.sin(t * 3.1)) : 0;
+      for (let i = 0; i < BINS; i++) {
+        const target = fake * (0.4 + 0.6 * Math.abs(Math.sin(i * 0.37 + t * 6)));
+        spec[i] += (target - spec[i]) * 0.2;
+      }
+      energy = fake;
+    }
+    return energy;
   }
-  function frame() {
-    t += reduce ? 0 : 1 / 60;
+
+  function emit(cx, cy, R, energy, thinking) {
+    const n = Math.floor(energy * energy * 16 + energy * 7 + 1);
+    for (let i = 0; i < n && parts.length < MAX_PARTS; i++) {
+      const bin = Math.floor(Math.random() * BINS);
+      const a = (bin / BINS) * Math.PI * 2 - Math.PI / 2 + (Math.random() - 0.5) * 0.05;
+      const boost = 0.4 + spec[bin] * 1.6;
+      const speed = (40 + Math.random() * 130) * boost * (0.5 + energy);
+      const tangent = (Math.random() - 0.5) * 40;
+      const r0 = R * (1.02 + Math.random() * 0.06);
+      parts.push({
+        x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0,
+        vx: Math.cos(a) * speed - Math.sin(a) * tangent,
+        vy: Math.sin(a) * speed + Math.cos(a) * tangent,
+        life: 0, max: 0.7 + Math.random() * 1.3,
+        size: 0.6 + Math.random() * 1.3 * boost,
+        amber: thinking || Math.random() < 0.06,
+      });
+    }
+  }
+  function ambient(cx, cy, R) {
+    // poeira de luz flutuando devagar em volta do núcleo, sempre
+    if (parts.length < 120 && Math.random() < 0.35) {
+      const a = Math.random() * Math.PI * 2;
+      const r0 = R * (0.9 + Math.random() * 0.6);
+      parts.push({
+        x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0,
+        vx: (Math.random() - 0.5) * 8, vy: -6 - Math.random() * 10,
+        life: 0, max: 2 + Math.random() * 3, size: 0.6 + Math.random() * 1.2, amber: false, dust: true,
+      });
+    }
+  }
+
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000 || 0.016);
+    last = now;
+    t += reduce ? 0 : dt;
     const speaking = state === "speaking";
     const thinking = state === "thinking";
     const listening = state === "listening";
-    if (speaking && currentSource && analyser) {
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      analyser.getByteFrequencyData(data);
-      let sum = 0;
-      for (let k = 2; k < 48; k++) sum += data[k];
-      api.level = Math.max(api.level, Math.min(1, (sum / 46 / 255) * 1.8));
-    } else if (speaking) api.level = Math.max(api.level, 0.25 + 0.35 * Math.abs(Math.sin(t * 7.3) * Math.sin(t * 3.1)));
-    api.level *= 0.94;
+
+    const energy = readSpectrum(speaking);
+    api.level = Math.max(api.level * 0.92, energy);
 
     ctx.clearRect(0, 0, w, h);
-    // Mesmo desenho da Evora de desktop (core/evora_hologram.py):
-    // escurece o anel estático da imagem e desenha por cima anéis segmentados
-    // girando em sentidos opostos, mais o espectro de áudio da voz.
+    const cx = w / 2, cy = h / 2;
     const half = Math.min(w, h) / 2;
-    const R = half * 0.72;
-    const amp = speaking ? api.level : 0;
-    ctx.save();
-    ctx.translate(w / 2, h / 2);
+    const R = half * 0.54;           // raio do anel desenhado na imagem
+    const amp = api.level;
 
-    const shade = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 1.12);
-    shade.addColorStop(0, "rgba(0,13,27,.55)");
-    shade.addColorStop(0.76, "rgba(0,15,32,.5)");
-    shade.addColorStop(1, "rgba(0,16,30,0)");
+    // 1) vinheta: assenta o núcleo sobre a arte sem esconder o nome
+    const shade = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.15);
+    shade.addColorStop(0, "rgba(0,10,22,.35)");
+    shade.addColorStop(0.8, "rgba(0,12,26,.28)");
+    shade.addColorStop(1, "rgba(0,12,26,0)");
     ctx.fillStyle = shade;
-    ctx.beginPath(); ctx.arc(0, 0, R * 1.12, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, R * 1.15, 0, Math.PI * 2); ctx.fill();
 
-    const alpha = state === "error" ? 0.45 : 0.9;
-    const tint = thinking ? `rgba(255,165,58,${alpha})` : `rgba(50,205,255,${alpha})`;
-    ctx.shadowColor = thinking ? "#ffa53a" : "#32cdff";
-    ctx.shadowBlur = 8;
-    const speed = thinking ? 2.2 : listening ? 1.4 : 1;
-    [[1.0, 1, 9], [0.87, -1, 6], [0.73, 1, 4]].forEach(([frac, dir, segs], idx) => {
-      const ring = R * frac * (1 + amp * 0.035);
-      const angle = ((t * speed * (20 + idx * 12) * dir) * Math.PI) / 180;
-      const gapRad = (12 * Math.PI) / 180;
-      ctx.lineWidth = Math.max(1.2, h * 0.004 + amp * 2.5);
-      ctx.strokeStyle = tint;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+
+    // 2) bloom do núcleo, respira com a voz
+    const bloomR = R * (1.05 + amp * 0.25);
+    const bloom = ctx.createRadialGradient(cx, cy, R * 0.3, cx, cy, bloomR);
+    const base = thinking ? "255,150,60" : "60,170,255";
+    bloom.addColorStop(0, `rgba(${base},${0.05 + amp * 0.18})`);
+    bloom.addColorStop(0.7, `rgba(${base},${0.03 + amp * 0.12})`);
+    bloom.addColorStop(1, `rgba(${base},0)`);
+    ctx.fillStyle = bloom;
+    ctx.beginPath(); ctx.arc(cx, cy, bloomR, 0, Math.PI * 2); ctx.fill();
+
+    // 3) anéis segmentados finos, girando em sentidos opostos (como no desktop)
+    const speed = thinking ? 2.4 : listening ? 1.3 : 0.8;
+    const rgb = thinking ? "255,170,80" : "120,225,255";
+    [[1.0, 1, 9, 1.4], [0.9, -1, 6, 1], [0.8, 1, 4, 2.2], [1.12, -1, 24, 0.8]].forEach(([frac, dir, segs, lw], idx) => {
+      const ring = R * frac * (1 + amp * 0.03);
+      const angle = (t * speed * (14 + idx * 9) * dir * Math.PI) / 180;
+      const gap = idx === 3 ? 0.12 : 0.2;
+      ctx.lineWidth = lw + amp * 1.2;
       for (let k = 0; k < segs; k++) {
         const start = angle + (k * Math.PI * 2) / segs;
+        const flick = 0.55 + 0.45 * Math.sin(t * 3 + k * 1.3 + idx);
+        ctx.strokeStyle = `rgba(${rgb},${(0.25 + 0.4 * flick) * (idx === 3 ? 0.6 : 1)})`;
         ctx.beginPath();
-        ctx.arc(0, 0, ring, start, start + (Math.PI * 2) / segs - gapRad);
+        ctx.arc(cx, cy, ring, start, start + (Math.PI * 2) / segs - gap);
         ctx.stroke();
       }
     });
 
-    // espectro radial (por fora do anel, para não cobrir o nome)
-    ctx.strokeStyle = "rgb(110,235,255)";
-    ctx.lineWidth = Math.max(1.2, h * 0.004);
-    const N = 64;
-    for (let i = 0; i < N; i++) {
-      const a = (i * Math.PI * 2) / N;
-      const pattern = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(i * 1.7 + t * 8));
-      const target = amp * pattern + (listening ? 0.05 + 0.04 * Math.sin(t * 4 + i) : 0);
-      bars[i % BARS] += (target - bars[i % BARS]) * 0.3;
-      const inner = R * 1.06;
-      const outer = inner + R * (0.025 + bars[i % BARS] * 0.26);
+    // 4) varredura de radar com rastro
+    const sweepA = t * (thinking ? 3 : 1.1);
+    for (let k = 0; k < 18; k++) {
+      const a = sweepA - k * 0.035;
+      ctx.strokeStyle = `rgba(${rgb},${0.5 * (1 - k / 18)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.95, a, a + 0.035); ctx.stroke();
+    }
+
+    // 5) espectro real da voz em volta do anel
+    ctx.lineCap = "round";
+    for (let i = 0; i < BINS; i++) {
+      const v = spec[i] + (listening ? 0.03 + 0.02 * Math.sin(t * 5 + i * 0.5) : 0);
+      if (v < 0.01) continue;
+      const a = (i / BINS) * Math.PI * 2 - Math.PI / 2;
+      const r0 = R * 1.035;
+      const r1 = r0 + R * (0.02 + v * 0.3);
+      const g = ctx.createLinearGradient(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0, cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+      g.addColorStop(0, `rgba(${rgb},.9)`);
+      g.addColorStop(1, `rgba(${rgb},0)`);
+      ctx.strokeStyle = g;
+      ctx.lineWidth = Math.max(1.2, R * 0.012);
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * inner, Math.sin(a) * inner);
-      ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+      ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+      ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
       ctx.stroke();
     }
+
+    // 6) partículas saindo do círculo
+    if (!reduce) {
+      if (speaking) emit(cx, cy, R, Math.max(energy, 0.15), false);
+      if (thinking && Math.random() < 0.5) emit(cx, cy, R, 0.25, true);
+      ambient(cx, cy, R);
+    }
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i];
+      p.life += dt;
+      if (p.life >= p.max) { parts.splice(i, 1); continue; }
+      // leve turbulência e arrasto
+      const swirl = Math.sin(p.y * 0.02 + t * 2) * 12;
+      p.vx = p.vx * (1 - 0.9 * dt) + swirl * dt;
+      p.vy = p.vy * (1 - 0.9 * dt) - (p.dust ? 0 : 6 * dt);
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      const k = 1 - p.life / p.max;
+      const alpha = (p.dust ? 0.35 : 0.9) * k * Math.min(1, p.life * 8);
+      const s = p.size * (p.dust ? 2.6 : 3) * (0.4 + 0.6 * k);
+      ctx.globalAlpha = alpha;
+      if (!p.dust) {
+        // rastro fino: dá a sensação de faísca em movimento, não de bolinha
+        ctx.strokeStyle = p.amber ? "rgba(255,190,110,.55)" : "rgba(150,235,255,.55)";
+        ctx.lineWidth = Math.max(0.6, p.size * 0.6);
+        ctx.beginPath();
+        ctx.moveTo(p.x - p.vx * 0.05, p.y - p.vy * 0.05);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      }
+      ctx.drawImage(p.amber ? amberSprite : glowSprite, p.x - s, p.y - s, s * 2, s * 2);
+    }
+    ctx.globalAlpha = 1;
     ctx.restore();
     requestAnimationFrame(frame);
   }
