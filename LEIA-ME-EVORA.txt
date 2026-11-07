@@ -1,0 +1,52 @@
+EVORA — VOZ FEMININA BRASILEIRA
+
+1. Feche o programa antes de substituir os arquivos.
+2. Extraia este ZIP. Se já usa o projeto, copie seu conteúdo para a pasta
+   Mark-LVI-main existente, substituindo os arquivos quando solicitado.
+3. Na pasta Mark-LVI-main, dê dois cliques em CONFIGURAR_EVORA.bat.
+4. Abra o programa normalmente.
+
+A voz do modo Gemini Live é Aoede (feminina). As instruções de fala usam
+português do Brasil. O sintetizador EdgeTTS usa Francisca (pt-BR).
+O padrão offline Kokoro foi ajustado para pf_dora, voz feminina brasileira.
+O configurador seleciona EdgeTTS para a síntese separada e preserva as demais
+configurações, incluindo chaves. Ele cria um backup local antes da alteração.
+Não compartilhe o arquivo de configuração nem seu backup: podem conter chaves.
+
+Gemini Live e EdgeTTS precisam de internet. As dependências e credenciais
+originais do projeto continuam necessárias. Não é necessário criar outra chave
+para esta mudança. Feche e reabra a Evora para aplicar a voz.
+
+Validação: sintaxe Python e aplicação do configurador com chave fictícia.
+A reprodução de áudio precisa ser conferida no seu computador.
+O comando de ativação por voz original (Hey Jarvis), se habilitado, permanece.
+
+APARÊNCIA
+A imagem enviada está incluída em face.png e aparece inteira no painel central,
+sem distorção. O configurador seleciona o modo de rosto para exibi-la.
+A personagem permanece estática. Sobre o círculo Evora há um holograma
+animado com anéis giratórios e barras que reagem ao áudio da assistente.
+Não há animação dos lábios ou do corpo.
+Os indicadores de estado do programa permanecem abaixo da imagem.
+
+PARA EVITAR ABRIR A VERSÃO ANTIGA
+Feche todas as janelas da Evora. Extraia o ZIP por completo.
+Abra ABRIR_EVORA.bat dentro da pasta extraída, não use o atalho antigo.
+Se suas chaves estão em outra pasta, copie config/api_keys.json dessa pasta
+para a pasta config da nova versão, antes de abrir. Não envie suas chaves.
+
+MICROFONE AUTOMÁTICO
+O configurador ativa a seleção automática. Ao iniciar, a Evora tenta o
+microfone padrão do sistema e outras entradas disponíveis. Headsets, webcams
+e monitores com microfone são aceitos. Saídas HDMI/alto-falantes não contam
+como microfone. Se a entrada falhar ou parar de enviar blocos de áudio, a
+Evora fecha a captura e tenta novamente a cada dois segundos, sem encerrar
+a sessão. O nome da entrada ativa aparece no registro do painel.
+Se um dispositivo conectado depois de iniciar não for listado pelo driver,
+feche e reabra a Evora. As permissões de microfone do Windows devem permitir
+acesso aos aplicativos da área de trabalho.
+
+Validação desta versão: renderização real do holograma com Qt em diferentes
+fases e volumes, sintaxe Python, seleção de entradas simuladas, fechamento
+de entrada ocupada e fallback para webcam/monitor. Reprodução de voz e
+conexão/desconexão dos dispositivos físicos exigem teste no seu Windows.
