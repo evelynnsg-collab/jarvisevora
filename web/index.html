@@ -5,110 +5,67 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Evora — assistente de inteligência artificial pessoal</title>
   <meta name="description" content="Evora, sua assistente de inteligência artificial pessoal, por voz e texto." />
-  <meta name="theme-color" content="#030a16" />
+  <meta name="theme-color" content="#020812" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M8 12h48L32 54z' fill='none' stroke='%2353e0ff' stroke-width='5' stroke-linejoin='round'/%3E%3Cpath d='M22 22h20L32 40z' fill='%2353e0ff'/%3E%3C/svg%3E" />
+  <link rel="preload" as="image" href="/painel.webp" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body data-state="idle">
-  <div class="bg-grid" aria-hidden="true"></div>
+  <!--
+    A tela é a imagem do painel (painel.webp, 1377×728 na escala original).
+    Cada elemento vivo fica por cima do desenho correspondente, posicionado
+    pelas coordenadas da imagem original (--x, --y, --w, --h em pixels).
+  -->
+  <div class="screen" id="screen">
+    <img class="backdrop" src="/painel.webp" alt="" aria-hidden="true" />
 
-  <div class="frame">
-    <!-- ── Topo ─────────────────────────────────────────── -->
-    <header class="hud-top">
-      <div class="version">
-        <svg class="tri" viewBox="0 0 64 64" aria-hidden="true"><path d="M8 12h48L32 54z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M22 22h20L32 40z" fill="currentColor"/></svg>
-        <span>EVORA <small>v1.0</small></span>
-      </div>
-      <div class="title">
-        <h1>EVORA</h1>
-        <p>Assistente de inteligência artificial pessoal</p>
-      </div>
-      <div class="top-right">
-        <div class="status" id="status" role="status" aria-live="polite">
-          <span class="dot"></span><span id="statusText">Iniciando…</span>
-        </div>
-        <span class="sep" aria-hidden="true"></span>
-        <time class="clock" id="clock">--:--:--</time>
-      </div>
-    </header>
+    <!-- textos com o nome -->
+    <span class="ov version" style="--x:100;--y:14;--w:120;--h:24">EVORA <small>v1.0</small></span>
+    <h1 class="ov title" style="--x:600;--y:10;--w:278;--h:46">EVORA</h1>
+    <strong class="ov ring-name" style="--x:822;--y:268;--w:210;--h:46">EVORA</strong>
 
-    <!-- ── Menu lateral ─────────────────────────────────── -->
-    <nav class="side" aria-label="Menu">
-      <ul class="menu">
-        <li><button class="active" data-action="painel"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9h-6v-6H9v6H3z"/></svg>Painel</button></li>
-        <li><button data-action="assistente"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01"/></svg>Assistente</button></li>
-        <li><button data-action="analises" data-prompt="Analise para mim: "><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Análises</button></li>
-        <li><button data-action="projetos" data-prompt="Me ajude a planejar o projeto: "><svg viewBox="0 0 24 24"><path d="m12 3 9 5v8l-9 5-9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>Projetos</button></li>
-        <li><button data-action="automacoes" data-prompt="Crie um passo a passo para automatizar: "><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Automações</button></li>
-        <li><button data-action="aprendizado" data-prompt="Me explique de forma simples: "><svg viewBox="0 0 24 24"><path d="m2 9 10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5"/></svg>Aprendizado</button></li>
-        <li><button data-action="config" id="settingsBtn" aria-expanded="false" aria-controls="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Configurações</button></li>
-      </ul>
+    <!-- status e relógio -->
+    <div class="ov status" id="status" role="status" aria-live="polite" style="--x:1196;--y:49;--w:84;--h:22">
+      <span class="dot"></span><span id="statusText">ONLINE</span>
+    </div>
+    <time class="ov clock" id="clock" style="--x:1296;--y:49;--w:70;--h:22">--:--:--</time>
 
-      <section class="panel sys" aria-label="Status do sistema">
-        <h2>Status do sistema</h2>
-        <div class="sys-head">
-          <div class="gauge" id="gauge" style="--p: 0"><span id="gaugeVal">0%</span></div>
-          <strong id="sysLabel">Verificando</strong>
-        </div>
-        <ul class="bars" id="sysBars">
-          <li data-key="gemini"><span>IA</span><i><b></b></i><em>—</em></li>
-          <li data-key="voz"><span>Voz</span><i><b></b></i><em>—</em></li>
-          <li data-key="mic"><span>Mic</span><i><b></b></i><em>—</em></li>
-          <li data-key="rede"><span>Rede</span><i><b></b></i><em>—</em></li>
-        </ul>
-      </section>
+    <!-- núcleo: reage à voz -->
+    <canvas class="ov" id="holo" aria-hidden="true" style="--x:712;--y:68;--w:420;--h:420"></canvas>
+
+    <!-- menu (os botões desenhados ficam clicáveis) -->
+    <nav class="menu" aria-label="Menu">
+      <button class="ov hot active" data-action="painel" style="--x:30;--y:78;--w:202;--h:44">Painel</button>
+      <button class="ov hot" data-action="assistente" style="--x:22;--y:124;--w:202;--h:42">Assistente</button>
+      <button class="ov hot" data-action="analises" data-prompt="Analise para mim: " style="--x:22;--y:167;--w:202;--h:42">Análises</button>
+      <button class="ov hot" data-action="projetos" data-prompt="Me ajude a planejar o projeto: " style="--x:22;--y:210;--w:202;--h:42">Projetos</button>
+      <button class="ov hot" data-action="automacoes" data-prompt="Crie um passo a passo para automatizar: " style="--x:22;--y:254;--w:202;--h:42">Automações</button>
+      <button class="ov hot" data-action="aprendizado" data-prompt="Me explique de forma simples: " style="--x:22;--y:298;--w:202;--h:43">Aprendizado</button>
+      <button class="ov hot" data-action="config" id="settingsBtn" aria-expanded="false" aria-controls="settings" style="--x:22;--y:342;--w:202;--h:45">Configurações</button>
     </nav>
 
-    <!-- ── Centro ───────────────────────────────────────── -->
-    <main class="center">
-      <figure class="persona">
-        <img src="/evora.webp" alt="Evora" width="470" height="568" />
-      </figure>
+    <!-- conversa -->
+    <section class="ov log-wrap" id="logWrap" style="--x:768;--y:452;--w:362;--h:200">
+      <button class="log-toggle" id="logToggle" type="button" aria-label="Ocultar conversa" title="Ocultar conversa">–</button>
+      <div class="log" id="log" aria-live="polite" aria-label="Conversa"></div>
+    </section>
 
-      <section class="holo-wrap" aria-label="Núcleo da Evora">
-        <canvas id="holo" aria-hidden="true"></canvas>
-        <div class="holo-label">
-          <svg class="tri" viewBox="0 0 64 64" aria-hidden="true"><path d="M8 12h48L32 54z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M22 22h20L32 40z" fill="currentColor"/></svg>
-          <strong>EVORA</strong>
-          <span>Planeja • Analisa • Executa</span>
-          <span>Aprende • Otimiza • Evolui</span>
-        </div>
-      </section>
-
-      <section class="log" id="log" aria-live="polite" aria-label="Conversa"></section>
-    </main>
-
-    <!-- ── Painel direito ───────────────────────────────── -->
-    <aside class="right">
-      <section class="panel modules">
-        <h2>Módulos ativos</h2>
-        <ul id="modules"></ul>
-      </section>
-      <section class="panel perf">
-        <h2>Desempenho <small>tempo de resposta</small></h2>
-        <canvas id="perf" aria-label="Tempo das últimas respostas"></canvas>
-        <p class="perf-note" id="perfNote">Aguardando a primeira resposta.</p>
-      </section>
-    </aside>
-
-    <!-- ── Barra de comando ─────────────────────────────── -->
-    <footer class="cmd">
-      <canvas id="wave" class="wave" aria-hidden="true"></canvas>
-      <span class="cmd-state" id="cmdState">EVORA PRONTA</span>
-      <form class="input-row" id="form" autocomplete="off">
-        <input id="input" type="text" placeholder="Como posso te ajudar hoje?" aria-label="Mensagem para a Evora" maxlength="4000" />
-        <button type="button" class="mic" id="micBtn" aria-label="Falar com a Evora" title="Falar (barra de espaço)">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-        </button>
-        <button type="submit" class="send" aria-label="Enviar">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-4 16-4-7z"/><path d="m12 13 8-9"/></svg>
-        </button>
-      </form>
-    </footer>
+    <!-- barra de comando -->
+    <canvas class="ov wave" id="wave" aria-hidden="true" style="--x:196;--y:663;--w:168;--h:47"></canvas>
+    <span class="ov cmd-state" id="cmdState" style="--x:404;--y:671;--w:124;--h:28">EVORA PRONTA</span>
+    <form class="ov input-row" id="form" autocomplete="off" style="--x:548;--y:664;--w:704;--h:38">
+      <input id="input" type="text" placeholder="Como posso te ajudar hoje?" aria-label="Mensagem para a Evora" maxlength="4000" />
+      <button type="button" class="mic" id="micBtn" aria-label="Falar com a Evora" title="Falar (barra de espaço)"></button>
+      <button type="button" class="scan" id="scanBtn" aria-label="Mostrar ou ocultar a conversa" title="Mostrar ou ocultar a conversa"></button>
+      <button type="submit" class="send" aria-label="Enviar" title="Enviar"></button>
+    </form>
   </div>
+
+  <!-- no celular, a conversa e o campo de texto vêm para cá -->
+  <div class="dock" id="dock"></div>
 
   <aside class="settings" id="settings" hidden>
     <h2>Configurações</h2>

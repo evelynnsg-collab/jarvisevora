@@ -45,18 +45,18 @@ let accessCode = store.get("evora.code", "");
 
 // ── Estado ────────────────────────────────────────────────────────────────
 const STATUS = {
-  idle: "Online",
-  listening: "Ouvindo…",
-  thinking: "Pensando…",
-  speaking: "Falando…",
-  error: "Erro",
-  offline: "Sem chave",
+  idle: "ONLINE",
+  listening: "OUVINDO",
+  thinking: "PENSANDO",
+  speaking: "FALANDO",
+  error: "ERRO",
+  offline: "SEM CHAVE",
 };
 let state = "idle";
 const CMD = {
   idle: "EVORA PRONTA",
   listening: "OUVINDO…",
-  thinking: "PROCESSANDO…",
+  thinking: "PENSANDO…",
   speaking: "FALANDO…",
   error: "VERIFICAR",
   offline: "SEM CHAVE",
@@ -86,6 +86,12 @@ function addMessage(role, text, extraClass = "") {
   div.innerHTML = renderText(text);
   els.log.appendChild(div);
   els.log.scrollTop = els.log.scrollHeight;
+  const wrap = document.getElementById("logWrap");
+  if (wrap && wrap.classList.contains("hidden") && role !== "user") {
+    wrap.classList.remove("hidden");
+    const t = document.getElementById("logToggle");
+    if (t) t.textContent = "–";
+  }
   return div;
 }
 function renderHistory() {
@@ -251,7 +257,7 @@ async function jarvisSpeak(text, token) {
   const clean = speechText(text);
   if (!clean || !ensureAudio()) return browserSpeak(text, { male: true });
   const parts = ttsChunks(clean);
-  setState("thinking", "Preparando a voz…");
+  setState("thinking");
   let pending = fetchTts(parts[0]);
   for (let i = 0; i < parts.length; i++) {
     let buffer;
@@ -436,7 +442,6 @@ const holo = (() => {
     const speaking = state === "speaking";
     const thinking = state === "thinking";
     const listening = state === "listening";
-    // nível de "áudio": decai sozinho; enquanto fala, recebe ruído para parecer voz
     if (speaking && currentSource && analyser) {
       const data = new Uint8Array(analyser.frequencyBinCount);
       analyser.getByteFrequencyData(data);
@@ -447,69 +452,46 @@ const holo = (() => {
     api.level *= 0.94;
 
     ctx.clearRect(0, 0, w, h);
-    const R = Math.min(w, h) * 0.34;
+    // O anel já está desenhado na imagem: aqui só entra a camada que reage.
+    const half = Math.min(w, h) / 2;
     ctx.save();
     ctx.translate(w / 2, h / 2);
-    ctx.shadowColor = "#53e0ff";
-    ctx.shadowBlur = 14;
 
-    // núcleo
-    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.7);
-    glow.addColorStop(0, `rgba(83,224,255,${0.18 + api.level * 0.25})`);
-    glow.addColorStop(1, "rgba(83,224,255,0)");
-    ctx.fillStyle = glow;
-    ctx.beginPath(); ctx.arc(0, 0, R * 0.7, 0, Math.PI * 2); ctx.fill();
-
-    // anéis giratórios
-    const spin = thinking ? 2.4 : listening ? 1.2 : 0.5;
-    ctx.save(); ctx.rotate(t * 0.6 * spin);
-    arc(R * 0.62, 0, Math.PI * 1.3, 2, 0.75);
-    arc(R * 0.62, Math.PI * 1.45, Math.PI * 0.4, 2, 0.35);
-    ctx.restore();
-    ctx.save(); ctx.rotate(-t * 0.35 * spin);
-    for (let i = 0; i < 6; i++) arc(R * 0.78, (i * Math.PI) / 3, Math.PI / 5, 4, 0.55);
-    ctx.restore();
-    ctx.save(); ctx.rotate(t * 0.18 * spin);
-    arc(R * 1.18, 0, Math.PI * 0.5, 1.5, 0.4);
-    arc(R * 1.18, Math.PI, Math.PI * 0.7, 1.5, 0.25);
-    ctx.restore();
-    // arcos laranja externos, como no painel
-    ctx.save(); ctx.rotate(-t * 0.12 * spin);
-    ctx.shadowColor = "#ffa53a";
-    for (const [a0, len] of [[0.15, 0.55], [Math.PI * 0.9, 0.35], [Math.PI * 1.45, 0.25]]) {
-      ctx.beginPath(); ctx.arc(0, 0, R * 1.3, a0, a0 + len);
-      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(255,165,58,.7)"; ctx.stroke();
+    // brilho do núcleo
+    const lvl = api.level + (listening ? 0.12 : 0);
+    if (lvl > 0.01) {
+      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, half * 0.62);
+      glow.addColorStop(0, `rgba(120,230,255,${0.08 + lvl * 0.3})`);
+      glow.addColorStop(1, "rgba(83,224,255,0)");
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(0, 0, half * 0.62, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.shadowColor = "#53e0ff";
-    ctx.restore();
-    // anel tracejado externo
-    ctx.save(); ctx.rotate(t * 0.05);
-    ctx.setLineDash([2, 9]); arc(R * 1.42, 0, Math.PI * 2, 2, 0.35); ctx.setLineDash([]);
-    ctx.restore();
 
-    // barras de áudio em volta
+    // barras de áudio em volta do anel
+    ctx.shadowColor = "#53e0ff"; ctx.shadowBlur = 10;
     for (let i = 0; i < BARS; i++) {
-      const target = api.level * (0.35 + 0.65 * Math.abs(Math.sin(i * 1.7 + t * 9))) + (listening ? 0.08 : 0.02);
+      const target = api.level * (0.35 + 0.65 * Math.abs(Math.sin(i * 1.7 + t * 9))) + (listening ? 0.1 : 0);
       bars[i] += (target - bars[i]) * 0.25;
+      if (bars[i] < 0.02) continue;
       const a = (i / BARS) * Math.PI * 2 - Math.PI / 2;
-      const r0 = R * 0.9;
-      const r1 = r0 + 4 + bars[i] * R * 0.38;
+      const r0 = half * 0.86;
+      const r1 = r0 + bars[i] * half * 0.13;
       ctx.beginPath();
       ctx.moveTo(Math.cos(a) * r0, Math.sin(a) * r0);
       ctx.lineTo(Math.cos(a) * r1, Math.sin(a) * r1);
-      ctx.lineWidth = 2.2;
-      ctx.strokeStyle = `rgba(83,224,255,${0.35 + bars[i] * 0.6})`;
+      ctx.lineWidth = Math.max(1.5, half * 0.012);
+      ctx.strokeStyle = `rgba(110,235,255,${0.35 + bars[i] * 0.65})`;
       ctx.stroke();
     }
 
-    // varredura enquanto pensa
-    if (thinking) {
-      ctx.rotate(t * 3);
-      const g = ctx.createLinearGradient(0, 0, R * 1.05, 0);
-      g.addColorStop(0, "rgba(255,181,71,0)");
-      g.addColorStop(1, "rgba(255,181,71,.55)");
-      ctx.strokeStyle = g; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(R * 1.05, 0); ctx.stroke();
+    // anel que gira enquanto ouve ou pensa
+    if (listening || thinking) {
+      ctx.rotate(t * (thinking ? 2.6 : 1.2));
+      ctx.lineWidth = Math.max(2, half * 0.014);
+      ctx.strokeStyle = thinking ? "rgba(255,165,58,.85)" : "rgba(83,224,255,.85)";
+      ctx.shadowColor = thinking ? "#ffa53a" : "#53e0ff";
+      ctx.beginPath(); ctx.arc(0, 0, half * 0.8, 0, Math.PI * 0.45); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, half * 0.8, Math.PI, Math.PI * 1.45); ctx.stroke();
     }
     ctx.restore();
     requestAnimationFrame(frame);
@@ -651,6 +633,7 @@ let storageOk = true;
 try { localStorage.setItem("evora.t", "1"); localStorage.removeItem("evora.t"); } catch { storageOk = false; }
 
 function refreshSystem() {
+  if (!$("gauge")) return;
   const voiceOk = prefs.style === "jarvis" ? sys.gemini !== false : Boolean(synth);
   const rows = {
     gemini: sys.gemini == null ? null : sys.gemini,
@@ -691,6 +674,34 @@ window.addEventListener("online", () => { sys.rede = true; refreshSystem(); });
 window.addEventListener("offline", () => { sys.rede = false; refreshSystem(); });
 refreshSystem();
 
+// Conversa: mostrar/ocultar (botão "–" e o ícone de enquadrar da barra)
+const logWrap = $("logWrap");
+function toggleLog(force) {
+  const hide = force ?? !logWrap.classList.contains("hidden");
+  logWrap.classList.toggle("hidden", hide);
+  $("logToggle").textContent = hide ? "+" : "–";
+}
+$("logToggle").addEventListener("click", () => toggleLog());
+$("scanBtn").addEventListener("click", () => toggleLog());
+
+// Celular ou tela em pé: a conversa e o campo de texto saem da imagem e vão para baixo dela.
+const mq = window.matchMedia("(max-width: 820px), (orientation: portrait)");
+const dock = $("dock"), screenEl = $("screen");
+function placeDock() {
+  const mobile = mq.matches;
+  document.body.classList.toggle("mobile", mobile);
+  if (mobile && logWrap.parentElement !== dock) {
+    logWrap.classList.remove("hidden");
+    dock.append(logWrap, els.form);
+  } else if (!mobile && logWrap.parentElement === dock) {
+    screenEl.insertBefore(logWrap, $("wave"));
+    screenEl.appendChild(els.form);
+  }
+  els.log.scrollTop = els.log.scrollHeight;
+}
+mq.addEventListener("change", placeDock);
+placeDock();
+
 // Desempenho: tempo real das últimas respostas da IA.
 const perfData = store.get("evora.perf", []);
 function recordPerf(ms) {
@@ -701,6 +712,7 @@ function recordPerf(ms) {
 }
 function drawPerf() {
   const c = $("perf");
+  if (!c) return;
   if (!c || !c.offsetParent) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = c.clientWidth, h = c.clientHeight;
