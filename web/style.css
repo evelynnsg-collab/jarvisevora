@@ -16,7 +16,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
-  background: var(--bg) radial-gradient(1200px 800px at 50% 45%, #061a33, var(--bg) 70%) fixed;
+  background: var(--bg) url("/painel-blur.webp") center / cover no-repeat fixed;
   color: var(--text);
   font: 14px/1.5 var(--body);
   overflow: hidden;
@@ -26,8 +26,7 @@ body {
 /* ── A tela: a imagem inteira, na proporção original ───────────────────── */
 .screen {
   position: relative;
-  width: min(100vw, calc(100dvh * 1377 / 728));
-  aspect-ratio: 1377 / 728;
+  width: 100vw; height: 100vh; /* o tamanho exato é ajustado pelo app.js */
   container-type: inline-size;
   /* 1u = 1 pixel da imagem original */
   --u: calc(100cqw / 1377);
@@ -185,6 +184,7 @@ body[data-state="listening"] .mic {
 .dock { display: none; }
 body.mobile { display: block; overflow: auto; }
 body.mobile .screen { width: 100vw; }
+body.mobile { background: var(--bg); }
 body.mobile .dock {
   display: flex; flex-direction: column; gap: 10px;
   padding: 10px 10px max(12px, env(safe-area-inset-bottom));
@@ -232,17 +232,10 @@ body.mobile .settings { top: auto; bottom: 80px; transform: translateX(-50%); }
 .msg.search a { color: #bfefff; text-decoration: none; border-bottom: 1px solid rgba(83,224,255,.4); }
 .msg.search a:hover { color: #fff; border-color: var(--cyan); }
 
-/* ── Profundidade e textura de tela ───────────────────────────────────── */
-.screen { transform-origin: 50% 50%; }
+/* ── Textura holográfica bem leve (sem vinheta de monitor) ───────────── */
 .fx { pointer-events: none; }
+.screen { box-shadow: 0 0 60px rgba(0,0,0,.6); }
 .screen::after {
   content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 8;
-  background:
-    repeating-linear-gradient(0deg, rgba(160,220,255,.03) 0 1px, transparent 1px 3px);
-  animation: flicker 6s infinite steps(1);
+  background: repeating-linear-gradient(0deg, rgba(160,220,255,.018) 0 1px, transparent 1px 3px);
 }
-.screen::before {
-  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 8;
-  background: radial-gradient(ellipse at 50% 45%, transparent 60%, rgba(0,3,10,.5) 100%);
-}
-@keyframes flicker { 0%, 100% { opacity: 1; } 47% { opacity: .85; } 48% { opacity: 1; } 82% { opacity: .92; } 83% { opacity: 1; } }

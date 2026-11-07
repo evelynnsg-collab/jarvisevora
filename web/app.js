@@ -228,12 +228,15 @@ async function fetchTts(text) {
 }
 
 function ttsChunks(text) {
-  // Pedaços de até ~450 caracteres: o primeiro chega rápido e o resto é buscado enquanto ele toca.
+  // O primeiro pedaço é só a primeira frase (curta = a voz começa mais cedo);
+  // os seguintes têm até ~400 caracteres e são gerados enquanto o anterior toca.
   const out = [];
   let cur = "";
   for (const s of chunk(text)) {
-    if ((cur + " " + s).length > 450 && cur) { out.push(cur.trim()); cur = ""; }
+    const limit = out.length === 0 ? 140 : 400;
+    if ((cur + " " + s).length > limit && cur) { out.push(cur.trim()); cur = ""; }
     cur += " " + s;
+    if (out.length === 0 && /[.!?]\s*$/.test(cur) && cur.length > 25) { out.push(cur.trim()); cur = ""; }
   }
   if (cur.trim()) out.push(cur.trim());
   return out;
@@ -518,13 +521,17 @@ const holo = (() => {
     return s;
   })();
 
+  // Desenha num espaço quadrado de 640×640 (unidades da arte); se a tela esticar
+  // um pouco, o canvas estica junto com a imagem e o anel continua encaixado.
+  const SZ = 640;
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     const r = c.getBoundingClientRect();
-    w = r.width; h = r.height;
-    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    w = SZ; h = SZ;
+    c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+    ctx.setTransform((dpr * r.width) / SZ, 0, 0, (dpr * r.height) / SZ, 0, 0);
   }
+  window.addEventListener("evora:layout", resize);
 
   function readSpectrum(speaking) {
     let energy = 0;
@@ -1020,16 +1027,17 @@ const fx = (() => {
   if (!c) return null;
   const ctx = c.getContext("2d");
   const W = 1377, H = 728;
-  let s = 1, dpr = 1, t = 0, lastT = performance.now();
+  let sx = 1, sy = 1, dpr = 1, t = 0, lastT = performance.now();
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     const r = c.getBoundingClientRect();
-    s = r.width / W;
+    sx = r.width / W; sy = r.height / H;
     c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
   }
   window.addEventListener("resize", resize);
+  window.addEventListener("evora:layout", resize);
   resize();
 
   // ── métricas reais da página ──
@@ -1056,7 +1064,8 @@ const fx = (() => {
     r: 0.4 + Math.random() * 1.1, p: Math.random() * Math.PI * 2,
   }));
 
-  const P = (x) => x * s; // pixel da arte → pixel da tela
+  // desenha direto nas coordenadas da arte; a transformação do canvas faz a escala
+  const P = (x) => x;
 
   // brilhos pré-desenhados por cor (gradiente a cada quadro é caro)
   const sprites = {};
@@ -1123,8 +1132,8 @@ const fx = (() => {
     const lvl = holo.level || 0;
     const speaking = state === "speaking", thinking = state === "thinking", listening = state === "listening";
 
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.setTransform(dpr * sx, 0, 0, dpr * sy, 0, 0);
+    ctx.clearRect(0, 0, W, H);
     ctx.globalCompositeOperation = "lighter";
 
     // ── painel do rosto: varredura + pontos de leitura
@@ -1314,23 +1323,27 @@ const fx = (() => {
   return { resize };
 })();
 
-// Profundidade: a tela inclina levemente acompanhando o mouse.
-// Só anima enquanto o mouse se move (parado, não gasta nada).
+// Tamanho da tela: ocupa a janela inteira. Se a proporção da janela for bem
+// diferente da arte, estica até ~15% e o que sobrar recebe o fundo desfocado.
 (() => {
   const el = $("screen");
-  if (!el || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  let tx = 0, ty = 0, x = 0, y = 0, running = false;
-  function step() {
-    x += (tx - x) * 0.08; y += (ty - y) * 0.08;
-    if (document.body.classList.contains("mobile")) { el.style.transform = ""; running = false; return; }
-    el.style.transform = `perspective(1800px) rotateY(${(x * 1.2).toFixed(3)}deg) rotateX(${(-y * 0.8).toFixed(3)}deg)`;
-    if (Math.abs(tx - x) + Math.abs(ty - y) > 0.002) requestAnimationFrame(step);
-    else running = false;
+  const AR = 1377 / 728;
+  function layout() {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    let w, h;
+    if (document.body.classList.contains("mobile")) { w = vw; h = vw / AR; }
+    else {
+      const ratio = vw / vh;
+      const a = Math.min(AR * 1.16, Math.max(AR * 0.86, ratio));
+      if (Math.abs(a - ratio) < 1e-3) { w = vw; h = vh; }
+      else if (ratio > a) { h = vh; w = vh * a; }
+      else { w = vw; h = vw / a; }
+    }
+    el.style.width = `${Math.round(w)}px`;
+    el.style.height = `${Math.round(h)}px`;
+    window.dispatchEvent(new Event("evora:layout"));
   }
-  window.addEventListener("pointermove", (e) => {
-    if (e.pointerType !== "mouse") return;
-    tx = (e.clientX / window.innerWidth - 0.5) * 2;
-    ty = (e.clientY / window.innerHeight - 0.5) * 2;
-    if (!running) { running = true; requestAnimationFrame(step); }
-  });
+  window.addEventListener("resize", layout);
+  if (typeof mq !== "undefined") mq.addEventListener("change", layout);
+  layout();
 })();

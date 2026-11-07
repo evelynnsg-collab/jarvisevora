@@ -35,12 +35,17 @@ function sanitizeHistory(messages) {
     .map((m) => ({ role: m.role, parts: [{ text: m.text.slice(0, MAX_CHARS) }] }));
 }
 
-async function callGemini({ apiKey, model, system, contents, useSearch, timeoutMs = 15000 }) {
+async function callGemini({ apiKey, model, system, contents, useSearch, fast = true, timeoutMs = 15000 }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const body = {
     systemInstruction: { parts: [{ text: system }] },
     contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
+    generationConfig: {
+      temperature: 0.7,
+      maxOutputTokens: 800,
+      // sem "raciocínio" longo: para conversa por voz, responder rápido vale mais
+      ...(fast ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    },
   };
   if (useSearch) body.tools = [{ google_search: {} }];
   // Cada tentativa tem prazo próprio: se o Gemini travar, passamos para a próxima
@@ -66,6 +71,20 @@ async function callGemini({ apiKey, model, system, contents, useSearch, timeoutM
 function extractText(data) {
   const parts = data?.candidates?.[0]?.content?.parts || [];
   return parts.map((p) => p.text || "").join("").trim();
+}
+
+const SEARCH_HINTS = new RegExp(
+  [
+    "hoje", "agora", "atual", "ultim", "último", "recente", "nesta semana", "este ano", "ontem", "amanh",
+    "not[ií]cia", "aconteceu", "pre[cç]o", "cota[cç][aã]o", "d[oó]lar", "euro", "bitcoin", "bolsa", "a[cç][oõ]es", "dividend",
+    "clima", "tempo em", "previs[aã]o", "temperatura", "jogo", "placar", "resultado", "campeonato", "elei[cç]",
+    "quem [eé]", "quem foi", "quem ganhou", "quando (vai|ser[aá]|come[cç]a)", "onde fica", "endere[cç]o", "hor[aá]rio",
+    "lan[cç]amento", "vers[aã]o", "pesquis", "procur", "busca", "na internet", "site", "20[2-3][0-9]",
+  ].join("|"),
+  "i"
+);
+function needsSearch(text) {
+  return SEARCH_HINTS.test(String(text || ""));
 }
 
 // Pesquisas feitas pelo Gemini (Google Search) e as páginas usadas na resposta.
@@ -127,8 +146,12 @@ export default async function handler(req, res) {
   // Se um esbarrar no limite (429), não existir (404) ou não aceitar a busca (400),
   // passa para o próximo em vez de desistir.
   const preferred = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  // A pesquisa no Google deixa a resposta bem mais lenta: só usa quando a pergunta
+  // depende de informação atual (notícias, preços, clima, "hoje", "quem é"...).
+  const lastUser = contents[contents.length - 1].parts[0].text;
+  const search = needsSearch(lastUser);
   const attempts = [
-    { model: preferred, useSearch: true },
+    ...(search ? [{ model: preferred, useSearch: true }] : []),
     { model: preferred, useSearch: false },
     { model: "gemini-2.5-flash", useSearch: false },
     { model: "gemini-flash-lite-latest", useSearch: false },
@@ -144,8 +167,11 @@ export default async function handler(req, res) {
       const left = BUDGET - (Date.now() - started);
       if (left < 4000) break;
       // a primeira tentativa (com pesquisa) pode demorar mais; as outras recebem menos tempo
-      const timeoutMs = Math.min(left - 1000, a.useSearch ? 12000 : 12000);
-      const out = await callGemini({ apiKey, system, contents, ...a, timeoutMs });
+      const timeoutMs = Math.min(left - 1000, a.useSearch ? 10000 : 9000);
+      let out = await callGemini({ apiKey, system, contents, ...a, timeoutMs });
+      if (!out.ok && out.status === 400 && /thinking/i.test(out.data?.error?.message || "")) {
+        out = await callGemini({ apiKey, system, contents, ...a, fast: false, timeoutMs });
+      }
       if (out.ok) {
         const text = extractText(out.data);
         if (text) return json(res, 200, { text, model: a.model, search: a.useSearch, ...extractSources(out.data) });
