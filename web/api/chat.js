@@ -92,23 +92,51 @@ export default async function handler(req, res) {
     return json(res, 400, { error: "Nenhuma mensagem para responder." });
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
   const system = buildSystemPrompt({ now: new Date() });
 
+  // Ordem de tentativas: cada modelo/recurso tem cota própria no plano gratuito.
+  // Se um esbarrar no limite (429), não existir (404) ou não aceitar a busca (400),
+  // passa para o próximo em vez de desistir.
+  const preferred = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  const attempts = [
+    { model: preferred, useSearch: true },
+    { model: preferred, useSearch: false },
+    { model: "gemini-2.5-flash", useSearch: false },
+    { model: "gemini-flash-lite-latest", useSearch: false },
+    { model: "gemini-2.5-flash-lite", useSearch: false },
+  ].filter((a, i, all) => all.findIndex((b) => b.model === a.model && b.useSearch === a.useSearch) === i);
+
+  let last = null;
   try {
-    let out = await callGemini({ apiKey, model, system, contents, useSearch: true });
-    // Se a busca do Google não estiver disponível para esse modelo/chave, tenta sem ela.
-    if (!out.ok && out.status === 400) {
-      out = await callGemini({ apiKey, model, system, contents, useSearch: false });
+    for (const a of attempts) {
+      const out = await callGemini({ apiKey, system, contents, ...a });
+      if (out.ok) {
+        const text = extractText(out.data);
+        if (text) return json(res, 200, { text, model: a.model, search: a.useSearch });
+        last = { status: 502, data: {} };
+        continue;
+      }
+      last = out;
+      if (![400, 404, 429].includes(out.status)) break; // chave inválida, erro do Google etc.
     }
-    if (!out.ok) {
-      const msg = out.data?.error?.message || `Erro ${out.status} no Gemini.`;
-      return json(res, out.status === 429 ? 429 : 502, { error: msg });
-    }
-    const text = extractText(out.data);
-    if (!text) return json(res, 502, { error: "O Gemini não devolveu resposta." });
-    return json(res, 200, { text, model });
-  } catch (e) {
-    return json(res, 502, { error: "Falha ao falar com o Gemini." });
+  } catch {
+    return json(res, 502, { error: "Falha ao falar com o Gemini. Tente de novo em instantes." });
   }
+
+  const raw = last?.data?.error?.message || "";
+  if (last?.status === 429) {
+    return json(res, 429, {
+      error:
+        "A cota gratuita da sua chave do Gemini acabou por agora. Ela volta sozinha (o limite diário zera de madrugada), " +
+        "ou você pode ativar o faturamento da chave no Google AI Studio.",
+      detail: raw,
+    });
+  }
+  if (last?.status === 400 && /api key/i.test(raw)) {
+    return json(res, 401, { error: "A chave do Gemini configurada no Vercel é inválida.", detail: raw });
+  }
+  if (last?.status === 403) {
+    return json(res, 403, { error: "A chave do Gemini não tem permissão para esse uso.", detail: raw });
+  }
+  return json(res, 502, { error: "O Gemini não respondeu.", detail: raw });
 }
