@@ -35,7 +35,7 @@ function sanitizeHistory(messages) {
     .map((m) => ({ role: m.role, parts: [{ text: m.text.slice(0, MAX_CHARS) }] }));
 }
 
-async function callGemini({ apiKey, model, system, contents, useSearch }) {
+async function callGemini({ apiKey, model, system, contents, useSearch, timeoutMs = 15000 }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const body = {
     systemInstruction: { parts: [{ text: system }] },
@@ -43,13 +43,24 @@ async function callGemini({ apiKey, model, system, contents, useSearch }) {
     generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
   };
   if (useSearch) body.tools = [{ google_search: {} }];
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json().catch(() => ({}));
-  return { ok: r.ok, status: r.status, data };
+  // Cada tentativa tem prazo próprio: se o Gemini travar, passamos para a próxima
+  // antes de estourar o tempo máximo da função no Vercel (que devolveria 504).
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 504, data: { error: { message: e?.name === "AbortError" ? "Tempo esgotado esperando o Gemini." : String(e?.message || e) } } };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function extractText(data) {
@@ -124,11 +135,17 @@ export default async function handler(req, res) {
     { model: "gemini-2.5-flash-lite", useSearch: false },
   ].filter((a, i, all) => all.findIndex((b) => b.model === a.model && b.useSearch === a.useSearch) === i);
 
+  const started = Date.now();
+  const BUDGET = 50000; // ms — abaixo do maxDuration (60 s) configurado no vercel.json
   let last = null;
   let quota = null; // guarda o erro de cota, se algum modelo recusou por isso
   try {
     for (const a of attempts) {
-      const out = await callGemini({ apiKey, system, contents, ...a });
+      const left = BUDGET - (Date.now() - started);
+      if (left < 4000) break;
+      // a primeira tentativa (com pesquisa) pode demorar mais; as outras recebem menos tempo
+      const timeoutMs = Math.min(left - 1000, a.useSearch ? 12000 : 12000);
+      const out = await callGemini({ apiKey, system, contents, ...a, timeoutMs });
       if (out.ok) {
         const text = extractText(out.data);
         if (text) return json(res, 200, { text, model: a.model, search: a.useSearch, ...extractSources(out.data) });
@@ -160,6 +177,9 @@ export default async function handler(req, res) {
   }
   if (last?.status === 403) {
     return json(res, 403, { error: "A chave do Gemini não tem permissão para esse uso.", detail: raw });
+  }
+  if (last?.status === 504) {
+    return json(res, 504, { error: "O Gemini está demorando para responder agora. Tente de novo em instantes.", detail: raw, code: "SLOW" });
   }
   return json(res, 502, {
     error: `O Gemini não respondeu (erro ${last?.status || "?"}). Tente de novo em instantes.`,

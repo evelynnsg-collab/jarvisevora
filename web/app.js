@@ -385,6 +385,14 @@ function arm() {
 // ── Conversa com o servidor ───────────────────────────────────────────────
 let busy = false;
 
+async function postChat() {
+  return fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(accessCode ? { "x-evora-code": accessCode } : {}) },
+    body: JSON.stringify({ messages: history.slice(-30), voiceStyle: prefs.style }),
+  });
+}
+
 async function send(text) {
   text = text.trim();
   if (!text || busy) return;
@@ -397,12 +405,19 @@ async function send(text) {
   const t0 = performance.now();
 
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...(accessCode ? { "x-evora-code": accessCode } : {}) },
-      body: JSON.stringify({ messages: history.slice(-30), voiceStyle: prefs.style }),
-    });
+    let res = await postChat();
+    // 504 = o Vercel cortou por tempo, 502/503 = falha momentânea: tenta mais uma vez sozinha
+    if ([502, 503, 504].includes(res.status)) {
+      setState("thinking", "TENTANDO DE NOVO…");
+      await new Promise((r) => setTimeout(r, 1200));
+      res = await postChat();
+    }
     const data = await res.json().catch(() => ({}));
+    if (!data.error && !res.ok) {
+      data.error = res.status === 504
+        ? "O Gemini demorou demais para responder. Tente falar de novo."
+        : `Erro ${res.status} no servidor.`;
+    }
 
     if (res.status === 401 && data.code === "LOCKED") {
       history.pop();
