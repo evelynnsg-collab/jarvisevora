@@ -13,6 +13,8 @@ const els = {
   settingsBtn: $("settingsBtn"),
   settings: $("settings"),
   voiceSelect: $("voiceSelect"),
+  styleSelect: $("styleSelect"),
+  fxToggle: $("fxToggle"),
   rate: $("rate"),
   rateOut: $("rateOut"),
   speakToggle: $("speakToggle"),
@@ -35,7 +37,7 @@ const store = {
 };
 
 const prefs = Object.assign(
-  { voice: "", rate: 1, speak: true, convo: false },
+  { voice: "", rate: 1, speak: true, convo: false, style: "jarvis", fx: true },
   store.get("evora.prefs", {})
 );
 let history = store.get("evora.history", []);
@@ -43,7 +45,7 @@ let accessCode = store.get("evora.code", "");
 
 // ── Estado ────────────────────────────────────────────────────────────────
 const STATUS = {
-  idle: "Pronta",
+  idle: "Online",
   listening: "Ouvindo…",
   thinking: "Pensando…",
   speaking: "Falando…",
@@ -132,22 +134,25 @@ function chunk(text) {
   return out;
 }
 
-function speak(text) {
+// Voz do navegador (feminina por padrão; masculina quando é o fallback do Jarvis).
+const MALE_HINTS = /ant[oô]nio|daniel|ricardo|thiago|fabio|f[aá]bio|donato|julio|j[uú]lio|humberto|valerio|male/i;
+function browserSpeak(text, { male = false } = {}) {
   return new Promise((resolve) => {
-    if (!synth || !prefs.speak) return resolve();
+    if (!synth) return resolve();
     synth.cancel();
     const pieces = chunk(speechText(text));
     if (!pieces.length) return resolve();
-    const voice = voices.find((v) => v.name === els.voiceSelect.value) || voices[0];
+    let voice = voices.find((v) => v.name === els.voiceSelect.value) || voices[0];
+    if (male) voice = voices.find((v) => MALE_HINTS.test(v.name)) || voice;
     setState("speaking");
     let i = 0;
     const next = () => {
-      if (i >= pieces.length) { holo.level = 0; return resolve(); }
+      if (i >= pieces.length || speakToken.cancelled) { holo.level = 0; return resolve(); }
       const u = new SpeechSynthesisUtterance(pieces[i++]);
       u.lang = voice?.lang || "pt-BR";
       if (voice) u.voice = voice;
       u.rate = prefs.rate;
-      u.pitch = 1.05;
+      u.pitch = male ? 0.8 : 1.05;
       u.onboundary = () => { holo.kick(); };
       u.onend = next;
       u.onerror = () => resolve();
@@ -156,7 +161,119 @@ function speak(text) {
     next();
   });
 }
+
+// ── Voz "Jarvis": áudio do Gemini TTS + efeito de IA no Web Audio ────────────
+let audioCtx = null;
+let analyser = null;
+let currentSource = null;
+let speakToken = { cancelled: false };
+
+function ensureAudio() {
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.connect(audioCtx.destination);
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  } catch { audioCtx = null; }
+  return audioCtx;
+}
+
+// Cadeia de efeito: tira o grave embolado, realça a presença e soma um eco
+// curtíssimo (12 ms) que dá o timbre "metálico" de voz sintetizada.
+function buildChain(ctx, input) {
+  if (!prefs.fx) { input.connect(analyser); return; }
+  const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 110;
+  const presence = ctx.createBiquadFilter(); presence.type = "peaking"; presence.frequency.value = 3200; presence.Q.value = 0.9; presence.gain.value = 4;
+  const low = ctx.createBiquadFilter(); low.type = "lowshelf"; low.frequency.value = 220; low.gain.value = 2;
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -22; comp.ratio.value = 4;
+  const dry = ctx.createGain(); dry.gain.value = 0.85;
+  const delay = ctx.createDelay(0.1); delay.delayTime.value = 0.012;
+  const fb = ctx.createGain(); fb.gain.value = 0.32;
+  const wet = ctx.createGain(); wet.gain.value = 0.3;
+  const out = ctx.createGain(); out.gain.value = 1.05;
+  input.connect(hp); hp.connect(low); low.connect(presence); presence.connect(comp);
+  comp.connect(dry); dry.connect(out);
+  comp.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(out);
+  out.connect(analyser);
+}
+
+async function fetchTts(text) {
+  const res = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(accessCode ? { "x-evora-code": accessCode } : {}) },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`tts ${res.status}`);
+  const buf = await res.arrayBuffer();
+  return audioCtx.decodeAudioData(buf);
+}
+
+function ttsChunks(text) {
+  // Pedaços de até ~450 caracteres: o primeiro chega rápido e o resto é buscado enquanto ele toca.
+  const out = [];
+  let cur = "";
+  for (const s of chunk(text)) {
+    if ((cur + " " + s).length > 450 && cur) { out.push(cur.trim()); cur = ""; }
+    cur += " " + s;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+
+function playBuffer(buffer, token) {
+  return new Promise((resolve) => {
+    if (token.cancelled) return resolve();
+    const src = audioCtx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = prefs.rate;
+    buildChain(audioCtx, src);
+    currentSource = src;
+    src.onended = () => { if (currentSource === src) currentSource = null; resolve(); };
+    src.start();
+  });
+}
+
+let ttsWarned = false;
+async function jarvisSpeak(text, token) {
+  const clean = speechText(text);
+  if (!clean || !ensureAudio()) return browserSpeak(text, { male: true });
+  const parts = ttsChunks(clean);
+  setState("thinking", "Preparando a voz…");
+  let pending = fetchTts(parts[0]);
+  for (let i = 0; i < parts.length; i++) {
+    let buffer;
+    try {
+      buffer = await pending;
+    } catch {
+      if (token.cancelled) return;
+      if (!ttsWarned) {
+        ttsWarned = true;
+        addMessage("system", "A voz do Gemini não respondeu agora (provavelmente cota). Usando a voz do navegador por enquanto.");
+      }
+      return browserSpeak(parts.slice(i).join(" "), { male: true });
+    }
+    if (token.cancelled) return;
+    if (i + 1 < parts.length) pending = fetchTts(parts[i + 1]);
+    setState("speaking");
+    await playBuffer(buffer, token);
+    if (token.cancelled) return;
+  }
+}
+
+async function speak(text) {
+  if (!prefs.speak) return;
+  stopSpeaking();
+  const token = (speakToken = { cancelled: false });
+  if (prefs.style === "jarvis") await jarvisSpeak(text, token);
+  else await browserSpeak(text);
+  holo.level = 0;
+}
 function stopSpeaking() {
+  speakToken.cancelled = true;
+  if (currentSource) { try { currentSource.stop(); } catch { /* já parou */ } currentSource = null; }
   if (synth) synth.cancel();
 }
 
@@ -234,7 +351,7 @@ async function send(text) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(accessCode ? { "x-evora-code": accessCode } : {}) },
-      body: JSON.stringify({ messages: history.slice(-30) }),
+      body: JSON.stringify({ messages: history.slice(-30), voiceStyle: prefs.style }),
     });
     const data = await res.json().catch(() => ({}));
 
@@ -307,7 +424,13 @@ const holo = (() => {
     const thinking = state === "thinking";
     const listening = state === "listening";
     // nível de "áudio": decai sozinho; enquanto fala, recebe ruído para parecer voz
-    if (speaking) api.level = Math.max(api.level, 0.25 + 0.35 * Math.abs(Math.sin(t * 7.3) * Math.sin(t * 3.1)));
+    if (speaking && currentSource && analyser) {
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      analyser.getByteFrequencyData(data);
+      let sum = 0;
+      for (let k = 2; k < 48; k++) sum += data[k];
+      api.level = Math.max(api.level, Math.min(1, (sum / 46 / 255) * 1.8));
+    } else if (speaking) api.level = Math.max(api.level, 0.25 + 0.35 * Math.abs(Math.sin(t * 7.3) * Math.sin(t * 3.1)));
     api.level *= 0.94;
 
     ctx.clearRect(0, 0, w, h);
@@ -374,12 +497,14 @@ const holo = (() => {
 // ── Ligações da interface ─────────────────────────────────────────────────
 els.form.addEventListener("submit", (e) => {
   e.preventDefault();
+  ensureAudio();
   const text = els.input.value;
   els.input.value = "";
   send(text);
 });
 
 els.mic.addEventListener("click", () => {
+  ensureAudio();
   if (state === "listening") stopListening();
   else if (state === "speaking") { stopSpeaking(); setState("idle"); startListening(); }
   else if (!busy) startListening();
@@ -415,13 +540,20 @@ els.rate.addEventListener("input", () => {
   els.rateOut.textContent = prefs.rate.toFixed(2);
   savePrefs();
 });
+els.styleSelect.value = prefs.style;
+els.fxToggle.checked = prefs.fx;
+function syncStyleUi() { $("voiceField").style.display = prefs.style === "browser" ? "" : "none"; }
+syncStyleUi();
+els.styleSelect.addEventListener("change", () => { prefs.style = els.styleSelect.value; ttsWarned = false; syncStyleUi(); savePrefs(); });
+els.fxToggle.addEventListener("change", () => { prefs.fx = els.fxToggle.checked; savePrefs(); });
 els.speakToggle.checked = prefs.speak;
 els.speakToggle.addEventListener("change", () => { prefs.speak = els.speakToggle.checked; if (!prefs.speak) stopSpeaking(); savePrefs(); });
 els.convoToggle.checked = prefs.convo;
 els.convoToggle.addEventListener("change", () => { prefs.convo = els.convoToggle.checked; savePrefs(); });
 els.testVoice.addEventListener("click", async () => {
   const was = prefs.speak; prefs.speak = true;
-  await speak("Oi, eu sou a Evora. Estou pronta.");
+  ensureAudio();
+  await speak(prefs.style === "jarvis" ? "Boa noite. Todos os sistemas estão operacionais. Estou pronto." : "Oi, eu sou a Evora. Estou pronta.");
   prefs.speak = was; setState("idle");
 });
 els.clearBtn.addEventListener("click", () => {

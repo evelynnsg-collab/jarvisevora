@@ -52,7 +52,18 @@
   <aside class="settings" id="settings" hidden>
     <h2>Configurações</h2>
     <label class="field">
-      <span>Voz</span>
+      <span>Estilo da voz</span>
+      <select id="styleSelect">
+        <option value="jarvis">Jarvis — IA masculina (Gemini)</option>
+        <option value="browser">Voz do navegador (feminina)</option>
+      </select>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="fxToggle" checked />
+      <span>Efeito metálico de IA</span>
+    </label>
+    <label class="field" id="voiceField">
+      <span>Voz do navegador</span>
       <select id="voiceSelect"></select>
     </label>
     <label class="field">

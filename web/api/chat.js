@@ -92,7 +92,7 @@ export default async function handler(req, res) {
     return json(res, 400, { error: "Nenhuma mensagem para responder." });
   }
 
-  const system = buildSystemPrompt({ now: new Date() });
+  const system = buildSystemPrompt({ now: new Date(), male: payload.voiceStyle === "jarvis" });
 
   // Ordem de tentativas: cada modelo/recurso tem cota própria no plano gratuito.
   // Se um esbarrar no limite (429), não existir (404) ou não aceitar a busca (400),
