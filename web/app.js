@@ -435,7 +435,8 @@ async function send(text) {
     if (!res.ok) {
       history.pop();
       store.set("evora.history", history);
-      addMessage("system error", (data.error || `Erro ${res.status}.`) + (data.detail ? `\nDetalhe do Google: ${data.detail}` : ""));
+      const detail = data.detail && res.status !== 429 ? `\nDetalhe: ${String(data.detail).slice(0, 180)}` : "";
+      addMessage("system error", (data.error || `Erro ${res.status}.`) + detail);
       setState(data.code === "NO_KEY" ? "offline" : "error");
       busy = false;
       if (data.code !== "NO_KEY") keepListening(3000);

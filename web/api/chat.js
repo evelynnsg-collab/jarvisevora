@@ -2,7 +2,9 @@
 // A chave fica só no servidor: defina GEMINI_API_KEY nas variáveis de ambiente do Vercel.
 //
 // Variáveis de ambiente:
-//   GEMINI_API_KEY     (obrigatória) chave do Google AI Studio
+//   GEMINI_API_KEY     chave do Google AI Studio (pesquisa na internet e voz)
+//   GROQ_API_KEY       (opcional, recomendada) chave do Groq — muito rápido e com
+//                      cota grátis bem maior; vira o cérebro principal da conversa
 //   GEMINI_MODEL       (opcional)   modelo; padrão "gemini-flash-latest"
 //   EVORA_ACCESS_CODE  (opcional)   se definida, o site pede este código antes de responder
 
@@ -68,6 +70,49 @@ async function callGemini({ apiKey, model, system, contents, useSearch, fast = t
   }
 }
 
+// ── Groq (API compatível com OpenAI) ──────────────────────────────────────
+async function callGroq({ apiKey, model, system, contents, timeoutMs = 12000 }) {
+  const messages = [
+    { role: "system", content: system },
+    ...contents.map((c) => ({ role: c.role === "model" ? "assistant" : "user", content: c.parts[0].text })),
+  ];
+  const body = { model, messages, temperature: 0.7, max_tokens: 800 };
+  if (/gpt-oss/.test(model)) body.reasoning_effort = "low";
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    const data = await r.json().catch(() => ({}));
+    const text = data?.choices?.[0]?.message?.content?.trim() || "";
+    return { ok: r.ok && Boolean(text), status: r.ok && !text ? 502 : r.status, text, data };
+  } catch (e) {
+    return { ok: false, status: 504, data: { error: { message: e?.name === "AbortError" ? "Tempo esgotado esperando o Groq." : String(e?.message || e) } } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Modelos que já disseram "cota esgotada": ficam de fora até liberar, para não
+// gastar segundos tentando de novo a cada pergunta (vale enquanto a função estiver quente).
+const blockedUntil = new Map();
+function retryAfterMs(msg) {
+  const m = String(msg || "").match(/retry in\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:([\d.]+)s)?/i);
+  if (!m) return 60_000;
+  const ms = ((+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0)) * 1000;
+  return Math.max(30_000, ms);
+}
+function fmtWait(ms) {
+  const min = Math.round(ms / 60000);
+  if (min < 60) return `${Math.max(1, min)} min`;
+  const h = Math.floor(min / 60), r = min % 60;
+  return r ? `${h}h${String(r).padStart(2, "0")}` : `${h}h`;
+}
+
 function extractText(data) {
   const parts = data?.candidates?.[0]?.content?.parts || [];
   return parts.map((p) => p.text || "").join("").trim();
@@ -109,14 +154,16 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     return json(res, 200, {
       ok: true,
-      configured: Boolean(process.env.GEMINI_API_KEY),
+      configured: Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY),
+      providers: { gemini: Boolean(process.env.GEMINI_API_KEY), groq: Boolean(process.env.GROQ_API_KEY) },
       locked: Boolean(process.env.EVORA_ACCESS_CODE),
     });
   }
   if (req.method !== "POST") return json(res, 405, { error: "Método não permitido." });
 
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const groqKey = process.env.GROQ_API_KEY;
+  if (!apiKey && !groqKey) {
     return json(res, 503, {
       error: "A chave do Gemini ainda não foi configurada no Vercel (GEMINI_API_KEY).",
       code: "NO_KEY",
@@ -150,17 +197,36 @@ export default async function handler(req, res) {
   // depende de informação atual (notícias, preços, clima, "hoje", "quem é"...).
   const lastUser = contents[contents.length - 1].parts[0].text;
   const search = needsSearch(lastUser);
+  const gemini = apiKey
+    ? [
+        { provider: "gemini", model: preferred, useSearch: false },
+        { provider: "gemini", model: "gemini-2.5-flash", useSearch: false },
+        { provider: "gemini", model: "gemini-flash-lite-latest", useSearch: false },
+        { provider: "gemini", model: "gemini-2.5-flash-lite", useSearch: false },
+      ]
+    : [];
+  const groqModel = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
+  const groq = groqKey
+    ? [
+        { provider: "groq", model: groqModel },
+        { provider: "groq", model: "llama-3.3-70b-versatile" },
+        { provider: "groq", model: "llama-3.1-8b-instant" },
+      ]
+    : [];
+  // Pergunta que precisa de pesquisa: Gemini com Google primeiro.
+  // Conversa comum: Groq primeiro (responde em menos de 1 s), Gemini de reserva.
   const attempts = [
-    ...(search ? [{ model: preferred, useSearch: true }] : []),
-    { model: preferred, useSearch: false },
-    { model: "gemini-2.5-flash", useSearch: false },
-    { model: "gemini-flash-lite-latest", useSearch: false },
-    { model: "gemini-2.5-flash-lite", useSearch: false },
-  ].filter((a, i, all) => all.findIndex((b) => b.model === a.model && b.useSearch === a.useSearch) === i);
+    ...(search && apiKey ? [{ provider: "gemini", model: preferred, useSearch: true }] : []),
+    ...groq,
+    ...gemini,
+  ]
+    .filter((a, i, all) => all.findIndex((b) => b.provider === a.provider && b.model === a.model && b.useSearch === a.useSearch) === i)
+    .filter((a) => !(blockedUntil.get(`${a.provider}:${a.model}`) > Date.now()));
 
   const started = Date.now();
   const BUDGET = 50000; // ms — abaixo do maxDuration (60 s) configurado no vercel.json
   let last = null;
+  let groqDead = false;
   let quota = null; // guarda o erro de cota, se algum modelo recusou por isso
   try {
     for (const a of attempts) {
@@ -168,21 +234,36 @@ export default async function handler(req, res) {
       if (left < 4000) break;
       // a primeira tentativa (com pesquisa) pode demorar mais; as outras recebem menos tempo
       const timeoutMs = Math.min(left - 1000, a.useSearch ? 10000 : 9000);
+      if (a.provider === "groq") {
+        if (groqDead) continue;
+        const out = await callGroq({ apiKey: groqKey, model: a.model, system, contents, timeoutMs: Math.min(timeoutMs, 10000) });
+        if (out.ok) return json(res, 200, { text: out.text, model: a.model, provider: "groq" });
+        last = out;
+        const msg = out.data?.error?.message || "";
+        console.error(`[evora] groq ${a.model} -> ${out.status}: ${msg}`);
+        if (out.status === 429) { quota = out; blockedUntil.set(`groq:${a.model}`, Date.now() + retryAfterMs(msg)); }
+        if (out.status === 401 || out.status === 403) groqDead = true; // chave do Groq inválida: segue no Gemini
+        continue;
+      }
       let out = await callGemini({ apiKey, system, contents, ...a, timeoutMs });
       if (!out.ok && out.status === 400 && /thinking/i.test(out.data?.error?.message || "")) {
         out = await callGemini({ apiKey, system, contents, ...a, fast: false, timeoutMs });
       }
       if (out.ok) {
         const text = extractText(out.data);
-        if (text) return json(res, 200, { text, model: a.model, search: a.useSearch, ...extractSources(out.data) });
+        if (text) return json(res, 200, { text, model: a.model, provider: "gemini", search: a.useSearch, ...extractSources(out.data) });
         last = { status: 502, data: {} };
         continue;
       }
       last = out;
-      if (out.status === 429) quota = out;
-      console.error(`[evora] ${a.model}${a.useSearch ? "+search" : ""} -> ${out.status}: ${out.data?.error?.message || ""}`);
-      // 401/403 = problema da chave: não adianta trocar de modelo.
-      if (out.status === 401 || out.status === 403) break;
+      const msg = out.data?.error?.message || "";
+      if (out.status === 429) {
+        quota = out;
+        if (!a.useSearch) blockedUntil.set(`gemini:${a.model}`, Date.now() + retryAfterMs(msg));
+      }
+      console.error(`[evora] ${a.model}${a.useSearch ? "+search" : ""} -> ${out.status}: ${msg}`);
+      // 401/403 = problema da chave do Gemini: não adianta trocar de modelo do Gemini.
+      if (out.status === 401 || out.status === 403) { if (!groqKey || groqDead) break; }
     }
   } catch {
     return json(res, 502, { error: "Falha ao falar com o Gemini. Tente de novo em instantes." });
@@ -190,12 +271,15 @@ export default async function handler(req, res) {
 
   if (quota && last?.status !== 401 && last?.status !== 403) last = quota;
   const raw = last?.data?.error?.message || "";
-  if (last?.status === 429) {
+  if (last?.status === 429 || (!attempts.length && blockedUntil.size)) {
+    const soonest = Math.min(...[...blockedUntil.values()].filter((v) => v > Date.now()), Date.now() + retryAfterMs(raw));
+    const wait = fmtWait(soonest - Date.now());
     return json(res, 429, {
-      error:
-        "A cota gratuita da sua chave do Gemini acabou por agora. Ela volta sozinha (o limite diário zera de madrugada), " +
-        "ou você pode ativar o faturamento da chave no Google AI Studio.",
-      detail: raw,
+      error: groqKey
+        ? `A cota grátis de hoje acabou nos dois provedores. Volta em cerca de ${wait}.`
+        : `A cota grátis do Gemini acabou (são poucos pedidos por dia no plano gratuito). Volta em cerca de ${wait}. ` +
+          "Para não parar mais: adicione uma chave grátis do Groq (GROQ_API_KEY) no Vercel ou ative o faturamento da chave do Gemini.",
+      code: "QUOTA",
     });
   }
   if (last?.status === 400 && /api key/i.test(raw)) {

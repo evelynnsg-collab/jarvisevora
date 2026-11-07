@@ -15,11 +15,15 @@ Publicada no Vercel a partir desta pasta (`web/` como Root Directory).
 
 | Nome | Obrigatória | Para quê |
 |---|---|---|
-| `GEMINI_API_KEY` | sim | Chave do Google AI Studio (https://aistudio.google.com/apikey) |
+| `GEMINI_API_KEY` | sim* | Chave do Google AI Studio (https://aistudio.google.com/apikey). Usada na pesquisa na internet e na voz Jarvis |
+| `GROQ_API_KEY` | recomendada | Chave grátis do Groq (https://console.groq.com/keys). Muito mais rápido e com cota grátis bem maior; vira o cérebro principal da conversa |
+| `GROQ_MODEL` | não | Modelo do Groq. Padrão: `openai/gpt-oss-120b` |
 | `GEMINI_MODEL` | não | Modelo do Gemini. Padrão: `gemini-flash-latest` |
 | `EVORA_TTS_VOICE` | não | Voz do Gemini para o estilo Jarvis. Padrão: `Charon`. Outras masculinas: `Orus`, `Iapetus`, `Algenib` |
 | `EVORA_TTS_MODEL` | não | Modelo de voz. Padrão: `gemini-3.1-flash-tts-preview` |
 | `EVORA_ACCESS_CODE` | não | Se definida, o site pede esse código antes de responder (evita que outras pessoas gastem sua cota) |
+
+\* Precisa de pelo menos uma das duas chaves (Gemini ou Groq).
 
 Depois de criar ou mudar uma variável, faça um **Redeploy** para ela valer.
 
