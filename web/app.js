@@ -461,6 +461,7 @@ async function send(text) {
 
 function showSources(data) {
   if (!data || (!data.queries?.length && !data.sources?.length)) return;
+  window.__evoraSearchHit?.();
   const div = document.createElement("div");
   div.className = "msg search";
   const q = (data.queries || []).join(" · ");
@@ -479,13 +480,13 @@ const holo = (() => {
   const ctx = c.getContext("2d");
   let w = 0, h = 0, dpr = 1, t = 0, last = performance.now();
   const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const api = {
-    level: 0,
-    kick(amount = 1) { api.level = Math.min(1, api.level + 0.55 * amount); },
-  };
-
   const BINS = 96;
   const spec = new Float32Array(BINS);
+  const api = {
+    level: 0,
+    spec,
+    kick(amount = 1) { api.level = Math.min(1, api.level + 0.55 * amount); },
+  };
   const freq = new Uint8Array(256);
   const parts = [];
   const MAX_PARTS = 900;
@@ -1007,4 +1008,329 @@ drawPerf();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+})();
+
+// ── Camada viva sobre a arte do painel ────────────────────────────────────
+// Tudo aqui é desenhado por cima da imagem, nas coordenadas dela (1377×728),
+// para os painéis se mexerem como uma interface de verdade:
+// scanners, globo, radares, reator do peito, módulos acendendo, medidores e
+// gráficos com dados reais da página, poeira de luz e reflexo de vidro.
+const fx = (() => {
+  const c = $("fx");
+  if (!c) return null;
+  const ctx = c.getContext("2d");
+  const W = 1377, H = 728;
+  let s = 1, dpr = 1, t = 0, lastT = performance.now();
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const r = c.getBoundingClientRect();
+    s = r.width / W;
+    c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // ── métricas reais da página ──
+  const metrics = { cpu: 8, gpu: 10, ram: null, ia: 0 };
+  let lagExpected = performance.now() + 250;
+  setInterval(() => {
+    const now = performance.now();
+    const lag = Math.max(0, now - lagExpected);
+    lagExpected = now + 250;
+    const cpuNow = Math.min(100, 4 + lag * 1.2 + frameLoad * 40);
+    metrics.cpu += (cpuNow - metrics.cpu) * 0.35;
+    if (performance.memory && performance.memory.jsHeapSizeLimit) {
+      metrics.ram = (performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100;
+    }
+  }, 250);
+  let frameLoad = 0, frameAvg = 16.7;
+
+  let searchFlash = 0;
+  window.__evoraSearchHit = () => { searchFlash = 1; };
+
+  const dust = Array.from({ length: 70 }, () => ({
+    x: Math.random() * W, y: Math.random() * H,
+    vx: (Math.random() - 0.5) * 6, vy: -2 - Math.random() * 6,
+    r: 0.4 + Math.random() * 1.1, p: Math.random() * Math.PI * 2,
+  }));
+
+  const P = (x) => x * s; // pixel da arte → pixel da tela
+
+  // brilhos pré-desenhados por cor (gradiente a cada quadro é caro)
+  const sprites = {};
+  function sprite(color) {
+    if (sprites[color]) return sprites[color];
+    const sc = document.createElement("canvas");
+    sc.width = sc.height = 64;
+    const g = sc.getContext("2d");
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0, `rgba(${color},1)`);
+    grd.addColorStop(0.35, `rgba(${color},.45)`);
+    grd.addColorStop(1, `rgba(${color},0)`);
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    return (sprites[color] = sc);
+  }
+  function glowDot(x, y, r, color, a) {
+    if (a <= 0.01) return;
+    ctx.globalAlpha = Math.min(1, a);
+    ctx.drawImage(sprite(color), P(x - r), P(y - r), P(r * 2), P(r * 2));
+    ctx.globalAlpha = 1;
+  }
+  function clipRect(x, y, w, h, fn) {
+    ctx.save(); ctx.beginPath(); ctx.rect(P(x), P(y), P(w), P(h)); ctx.clip(); fn(); ctx.restore();
+  }
+  function scanLine(x, y, w, h, period, color = "120,230,255") {
+    const k = (t % period) / period;
+    const yy = y + k * h;
+    clipRect(x, y, w, h, () => {
+      const g = ctx.createLinearGradient(0, P(yy - 14), 0, P(yy + 2));
+      g.addColorStop(0, `rgba(${color},0)`);
+      g.addColorStop(0.85, `rgba(${color},.22)`);
+      g.addColorStop(1, `rgba(${color},.75)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(P(x), P(yy - 14), P(w), P(16));
+    });
+  }
+  function radar(cx, cy, r, speed, color = "110,230,255") {
+    const a = t * speed;
+    ctx.save();
+    ctx.translate(P(cx), P(cy));
+    for (let k = 0; k < 24; k++) {
+      ctx.strokeStyle = `rgba(${color},${0.13 * Math.pow(1 - k / 24, 1.5)})`;
+      ctx.lineWidth = P(r) * 0.9;
+      ctx.beginPath(); ctx.arc(0, 0, P(r) * 0.5, a - k * 0.045, a - k * 0.045 + 0.05); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function sysScore() {
+    const voiceOk = prefs.style === "jarvis" ? sys.gemini !== false : Boolean(synth);
+    const vals = [sys.gemini, voiceOk, sys.mic, sys.rede].filter((v) => v !== null && v !== undefined);
+    if (!vals.length) return 0;
+    return Math.round((vals.filter(Boolean).length / vals.length) * 100);
+  }
+
+  const shown = { cpu: 0, gpu: 0, ram: 0, ia: 0, score: 0 };
+
+  function draw(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000 || 0.016);
+    lastT = now;
+    frameAvg += ((dt * 1000) - frameAvg) * 0.05;
+    frameLoad = Math.max(0, Math.min(1, (frameAvg - 16.7) / 16.7));
+    t += reduce ? 0 : dt;
+    const lvl = holo.level || 0;
+    const speaking = state === "speaking", thinking = state === "thinking", listening = state === "listening";
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.globalCompositeOperation = "lighter";
+
+    // ── painel do rosto: varredura + pontos de leitura
+    scanLine(270, 108, 74, 104, 3.2);
+    for (let i = 0; i < 6; i++) {
+      const on = Math.sin(t * 3 + i * 1.7) > 0.6;
+      if (on) glowDot(282 + ((i * 37) % 52), 125 + ((i * 53) % 78), 3.5, "150,240,255", 0.8);
+    }
+    // ── DNA: faixa de luz subindo
+    clipRect(250, 236, 58, 114, () => {
+      const k = 1 - (t % 2.6) / 2.6;
+      const yy = 236 + k * 130 - 10;
+      const g = ctx.createLinearGradient(0, P(yy - 16), 0, P(yy + 16));
+      g.addColorStop(0, "rgba(120,230,255,0)"); g.addColorStop(0.5, "rgba(140,240,255,.35)"); g.addColorStop(1, "rgba(120,230,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(P(250), P(yy - 16), P(58), P(32));
+    });
+    // ── globo: meridianos girando (só na parte que não fica atrás do cabelo)
+    ctx.save();
+    ctx.beginPath(); ctx.arc(P(383), P(298), P(71), 0, Math.PI * 2); ctx.clip();
+    ctx.beginPath(); ctx.rect(P(300), P(220), P(128), P(160)); ctx.clip();
+    ctx.translate(P(383), P(298));
+    ctx.lineWidth = Math.max(0.6, P(0.8));
+    for (let m = 0; m < 6; m++) {
+      const ph = (t * 0.35 + m / 6) % 1;
+      const rx = Math.abs(Math.cos(ph * Math.PI)) * P(70);
+      const front = Math.sin(ph * Math.PI) > 0;
+      ctx.strokeStyle = `rgba(120,220,255,${front ? 0.28 : 0.08})`;
+      ctx.beginPath(); ctx.ellipse(0, 0, Math.max(0.5, rx), P(70), 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    const sweepX = ((t * 0.25) % 1) * P(150) - P(75);
+    const sg = ctx.createLinearGradient(sweepX - P(18), 0, sweepX + P(18), 0);
+    sg.addColorStop(0, "rgba(120,220,255,0)"); sg.addColorStop(0.5, "rgba(150,235,255,.18)"); sg.addColorStop(1, "rgba(120,220,255,0)");
+    ctx.fillStyle = sg; ctx.fillRect(sweepX - P(18), -P(72), P(36), P(144));
+    ctx.restore();
+
+    // ── radares pequenos
+    radar(287, 467, 34, 1.6);
+    radar(1110, 156, 21, -2.2);
+    // ── scanner do corpo (direita)
+    scanLine(1152, 338, 98, 160, 4.2);
+
+    // ── reator do peito: pulsa com a voz
+    const flick = 0.9 + 0.1 * Math.sin(t * 23) * Math.sin(t * 7);
+    const core = (0.22 + lvl * 0.9 + (listening ? 0.12 : 0)) * flick;
+    glowDot(657, 452, 30 + lvl * 26, "120,220,255", Math.min(0.85, core));
+    glowDot(657, 452, 12 + lvl * 8, "235,252,255", Math.min(0.9, core * 0.9));
+
+    // ── módulos ativos acendendo conforme o que a Evora está fazendo
+    searchFlash = Math.max(0, searchFlash - dt * 0.35);
+    const active = [
+      speaking || thinking, thinking, false, typeof loopActive === "function" && loopActive(),
+      searchFlash > 0.02, speaking, listening,
+    ];
+    const rows = [148, 172, 196, 222, 247, 272, 296];
+    rows.forEach((y, i) => {
+      const cx = 1183 + i * 1.6;
+      const on = active[i];
+      const pulse = 0.5 + 0.5 * Math.sin(t * 5 + i);
+      if (on) {
+        const g = ctx.createLinearGradient(P(1170), 0, P(1362), 0);
+        g.addColorStop(0, `rgba(80,255,160,${0.07 + pulse * 0.06})`);
+        g.addColorStop(1, "rgba(80,255,160,0)");
+        ctx.fillStyle = g; ctx.fillRect(P(1170), P(y - 10), P(192), P(20));
+        glowDot(cx, y, 13, "90,255,160", 0.3 + pulse * 0.25);
+      } else {
+        glowDot(cx, y, 9, "90,255,160", 0.08 + 0.05 * Math.sin(t * 1.3 + i * 0.9));
+      }
+    });
+
+    // ── poeira de luz pela tela toda
+    for (const d of dust) {
+      d.x += d.vx * dt; d.y += d.vy * dt; d.p += dt * 2;
+      if (d.y < -5) { d.y = H + 5; d.x = Math.random() * W; }
+      if (d.x < -5) d.x = W + 5; if (d.x > W + 5) d.x = -5;
+      const a = 0.18 + 0.22 * Math.sin(d.p);
+      if (a > 0.05) glowDot(d.x, d.y, d.r * 4, "150,225,255", a);
+    }
+
+    // ── reflexo de vidro atravessando a tela a cada ~9 s
+    const cyc = (t % 9) / 9;
+    if (cyc < 0.35) {
+      const x = -300 + (cyc / 0.35) * (W + 600);
+      ctx.save();
+      ctx.translate(P(x), 0); ctx.rotate(0.35);
+      const g = ctx.createLinearGradient(-P(60), 0, P(60), 0);
+      g.addColorStop(0, "rgba(160,230,255,0)"); g.addColorStop(0.5, "rgba(170,235,255,.045)"); g.addColorStop(1, "rgba(160,230,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(-P(60), -P(200), P(120), P(H + 600));
+      ctx.restore();
+    }
+
+    // ── medidores (Status do sistema) com dados reais
+    ctx.globalCompositeOperation = "source-over";
+    const gpuNow = Math.min(100, 6 + frameLoad * 70 + lvl * 18 + (speaking ? 6 : 0));
+    metrics.gpu += (gpuNow - metrics.gpu) * 0.05;
+    const iaTarget = sys.gemini === false ? 0 : thinking ? 85 + 15 * Math.abs(Math.sin(t * 4)) : speaking ? 70 + lvl * 30 : 100;
+    metrics.ia += (iaTarget - metrics.ia) * 0.08;
+    const target = { cpu: metrics.cpu, gpu: metrics.gpu, ram: metrics.ram ?? 0, ia: metrics.ia, score: sysScore() };
+    for (const k in shown) shown[k] += (target[k] - shown[k]) * 0.08;
+
+    const bars = [["cpu", 530], ["gpu", 560], ["ram", 590], ["ia", 619]];
+    for (const [k, y] of bars) {
+      const v = Math.max(0, Math.min(100, shown[k]));
+      const x0 = 98, w = 80;
+      ctx.fillStyle = "rgba(83,224,255,.12)";
+      ctx.fillRect(P(x0), P(y - 3), P(w), P(6));
+      const g = ctx.createLinearGradient(P(x0), 0, P(x0 + w), 0);
+      g.addColorStop(0, "#2fb6e6"); g.addColorStop(1, "#8ff0ff");
+      ctx.fillStyle = g;
+      ctx.fillRect(P(x0), P(y - 3), P(w * v / 100), P(6));
+      ctx.fillStyle = "rgba(83,224,255,.18)";
+      ctx.fillRect(P(x0), P(y - 5), P(w * v / 100), P(10));
+      ctx.font = `600 ${P(14)}px Rajdhani, sans-serif`;
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.fillStyle = "#dff3ff";
+      const label = k === "ram" && metrics.ram === null ? "—" : `${Math.round(v)}%`;
+      ctx.fillText(label, P(214), P(y + 1));
+    }
+    // anel do status geral
+    const sc = shown.score;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(83,224,255,.14)"; ctx.lineWidth = P(5);
+    ctx.beginPath(); ctx.arc(P(67), P(476), P(25), 0, Math.PI * 2); ctx.stroke();
+    const arcEnd = -Math.PI / 2 + (Math.PI * 2 * sc) / 100;
+    ctx.strokeStyle = "rgba(83,224,255,.25)"; ctx.lineWidth = P(9);
+    ctx.beginPath(); ctx.arc(P(67), P(476), P(25), -Math.PI / 2, arcEnd); ctx.stroke();
+    ctx.strokeStyle = "#53e0ff"; ctx.lineWidth = P(5);
+    ctx.beginPath(); ctx.arc(P(67), P(476), P(25), -Math.PI / 2, arcEnd); ctx.stroke();
+    ctx.textAlign = "center"; ctx.fillStyle = "#eaf8ff";
+    ctx.font = `600 ${P(14)}px Rajdhani, sans-serif`;
+    ctx.fillText(`${Math.round(sc)}%`, P(67), P(477));
+    const st = sc >= 99.5 ? ["OPERACIONAL", "#5dff9c"] : sc >= 50 ? ["PARCIAL", "#ffa53a"] : ["ATENÇÃO", "#ff6b6b"];
+    ctx.textAlign = "left"; ctx.fillStyle = st[1];
+    ctx.font = `600 ${P(16)}px Rajdhani, sans-serif`;
+    ctx.fillText(st[0], P(107), P(477));
+
+    // ── mini espectro (painel da direita)
+    const spec = holo.spec || [];
+    for (let i = 0; i < 22; i++) {
+      const v = (spec[(i * 4) % (spec.length || 1)] || 0) * 0.9 + 0.08 + 0.06 * Math.abs(Math.sin(t * 2 + i));
+      const bh = Math.min(1, v) * 32;
+      ctx.fillStyle = `rgba(120,225,255,${0.5 + Math.min(0.5, v)})`;
+      ctx.fillRect(P(1279 + i * 4), P(450 - bh), P(2.4), P(bh));
+    }
+
+    // ── gráfico de performance: tempo real das respostas
+    drawPerfChart();
+    requestAnimationFrame(draw);
+  }
+
+  function drawPerfChart() {
+    const x0 = 1152, y0 = 545, w = 212, h = 72;
+    ctx.strokeStyle = "rgba(83,224,255,.1)"; ctx.lineWidth = 1;
+    for (let i = 0; i <= 3; i++) { ctx.beginPath(); ctx.moveTo(P(x0), P(y0 + (h * i) / 3)); ctx.lineTo(P(x0 + w), P(y0 + (h * i) / 3)); ctx.stroke(); }
+    const data = perfData.slice(-14);
+    ctx.font = `600 ${P(11)}px Rajdhani, sans-serif`;
+    if (!data.length) {
+      ctx.fillStyle = "rgba(170,210,230,.7)"; ctx.textAlign = "center";
+      ctx.fillText("AGUARDANDO A PRIMEIRA RESPOSTA", P(x0 + w / 2), P(y0 + h / 2));
+      return;
+    }
+    const max = Math.max(...data, 3000);
+    const n = 14, bw = w / n;
+    const pts = data.map((v, i) => {
+      const x = x0 + (n - data.length + i) * bw + bw / 2;
+      return [x, y0 + h - (v / max) * (h - 6)];
+    });
+    data.forEach((v, i) => {
+      const [x, y] = pts[i];
+      const g = ctx.createLinearGradient(0, P(y), 0, P(y0 + h));
+      g.addColorStop(0, "rgba(83,224,255,.75)"); g.addColorStop(1, "rgba(83,224,255,.08)");
+      ctx.fillStyle = g; ctx.fillRect(P(x - bw * 0.28), P(y), P(bw * 0.56), P(y0 + h - y));
+    });
+    ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(P(x), P(y)) : ctx.moveTo(P(x), P(y))));
+    ctx.strokeStyle = "rgba(83,224,255,.35)"; ctx.lineWidth = P(4); ctx.stroke();
+    ctx.strokeStyle = "#cfefff"; ctx.lineWidth = P(1.4); ctx.stroke();
+    pts.forEach(([x, y], i) => {
+      const lastOne = i === pts.length - 1;
+      ctx.fillStyle = lastOne ? "#ffd28a" : "#eaf8ff";
+      ctx.beginPath(); ctx.arc(P(x), P(y), P(lastOne ? 2.6 + Math.sin(t * 6) : 1.8), 0, Math.PI * 2); ctx.fill();
+    });
+    const lastV = data[data.length - 1], avg = data.reduce((a, b) => a + b, 0) / data.length;
+    ctx.fillStyle = "rgba(200,235,250,.85)"; ctx.textAlign = "right";
+    ctx.fillText(`ÚLTIMA ${(lastV / 1000).toFixed(1)} s · MÉDIA ${(avg / 1000).toFixed(1)} s`, P(x0 + w), P(y0 - 6));
+  }
+
+  requestAnimationFrame(draw);
+  return { resize };
+})();
+
+// Profundidade: a tela inclina levemente acompanhando o mouse.
+// Só anima enquanto o mouse se move (parado, não gasta nada).
+(() => {
+  const el = $("screen");
+  if (!el || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let tx = 0, ty = 0, x = 0, y = 0, running = false;
+  function step() {
+    x += (tx - x) * 0.08; y += (ty - y) * 0.08;
+    if (document.body.classList.contains("mobile")) { el.style.transform = ""; running = false; return; }
+    el.style.transform = `perspective(1800px) rotateY(${(x * 1.2).toFixed(3)}deg) rotateX(${(-y * 0.8).toFixed(3)}deg)`;
+    if (Math.abs(tx - x) + Math.abs(ty - y) > 0.002) requestAnimationFrame(step);
+    else running = false;
+  }
+  window.addEventListener("pointermove", (e) => {
+    if (e.pointerType !== "mouse") return;
+    tx = (e.clientX / window.innerWidth - 0.5) * 2;
+    ty = (e.clientY / window.innerHeight - 0.5) * 2;
+    if (!running) { running = true; requestAnimationFrame(step); }
+  });
 })();

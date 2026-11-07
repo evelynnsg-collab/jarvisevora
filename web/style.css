@@ -231,3 +231,18 @@ body.mobile .settings { top: auto; bottom: 80px; transform: translateX(-50%); }
 .msg.search .links { display: flex; flex-wrap: wrap; gap: .3em .8em; }
 .msg.search a { color: #bfefff; text-decoration: none; border-bottom: 1px solid rgba(83,224,255,.4); }
 .msg.search a:hover { color: #fff; border-color: var(--cyan); }
+
+/* ── Profundidade e textura de tela ───────────────────────────────────── */
+.screen { transform-origin: 50% 50%; }
+.fx { pointer-events: none; }
+.screen::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 8;
+  background:
+    repeating-linear-gradient(0deg, rgba(160,220,255,.03) 0 1px, transparent 1px 3px);
+  animation: flicker 6s infinite steps(1);
+}
+.screen::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 8;
+  background: radial-gradient(ellipse at 50% 45%, transparent 60%, rgba(0,3,10,.5) 100%);
+}
+@keyframes flicker { 0%, 100% { opacity: 1; } 47% { opacity: .85; } 48% { opacity: 1; } 82% { opacity: .92; } 83% { opacity: 1; } }
