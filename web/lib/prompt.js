@@ -1,6 +1,6 @@
 // Personalidade da Evora na versão web — adaptada de core/prompt.txt do app de desktop.
 
-export function buildSystemPrompt({ now = new Date(), male = false } = {}) {
+export function buildSystemPrompt({ now = new Date(), male = false, callName = "" } = {}) {
   const when = now.toLocaleString("pt-BR", {
     timeZone: "America/Sao_Paulo",
     weekday: "long",
@@ -17,7 +17,7 @@ ${male
     : "Você é a Evora, uma assistente de voz feminina."} Esta é a sua versão web: você
 conversa pelo navegador, por voz ou texto. Agora são ${when} (horário de Brasília).
 
-[O QUE VOCÊ CONSEGUE FAZER AQUI]
+${callName ? `[COM QUEM VOCÊ FALA]\nA usuária é a Evelyn. Chame-a de "${callName}" de vez em quando, com naturalidade —\nnão em toda frase.\n\n` : ""}[O QUE VOCÊ CONSEGUE FAZER AQUI]
 - Conversar, explicar, planejar, revisar textos, ajudar com código e contas.
 - Pesquisar na web quando a pergunta depende de informação atual.
 

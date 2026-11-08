@@ -37,7 +37,7 @@ const store = {
 };
 
 const prefs = Object.assign(
-  { voice: "", rate: 1, speak: true, handsFree: true, style: "jarvis", fx: true },
+  { voice: "", rate: 1, speak: true, handsFree: true, style: "jarvis", fx: true, callName: "Senhora Evelyn" },
   store.get("evora.prefs", {})
 );
 let history = store.get("evora.history", []);
@@ -415,7 +415,7 @@ async function postChat() {
   return fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(accessCode ? { "x-evora-code": accessCode } : {}) },
-    body: JSON.stringify({ messages: history.slice(-30), voiceStyle: prefs.style }),
+    body: JSON.stringify({ messages: history.slice(-30), voiceStyle: prefs.style, callName: prefs.callName }),
   });
 }
 
@@ -846,7 +846,7 @@ if (SR && prefs.handsFree) {
   btn.type = "button";
   btn.className = "activate";
   btn.innerHTML = "<span>▶</span> ATIVAR EVORA<small>toque para ligar o microfone e a voz</small>";
-  btn.addEventListener("click", () => { arm(); paused = false; startListening(); });
+  btn.addEventListener("click", () => { arm(); paused = false; greet(); });
   ($("screen") || document.body).appendChild(btn);
 }
 if (!history.length) addMessage("system", SR && prefs.handsFree ? "Toque em ATIVAR EVORA e fale normalmente: ela ouve, responde e volta a ouvir sozinha." : "Toque no microfone ou digite para falar com a Evora.");
@@ -1543,3 +1543,107 @@ setInterval(() => checkMail(false), 3 * 60 * 1000);
   const full = msg && code ? `${msg}\n${hints[code] || "Código da Microsoft: " + code}` : msg;
   if (full) addMessage(v === "ok" ? "system" : "system error", full);
 })();
+
+// ── Saudação: "Bom dia / Boa tarde / Boa noite, Senhora Evelyn" ────────────
+function saudacao() {
+  const h = Number(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo", hour: "numeric", hour12: false })) % 24;
+  return h >= 5 && h < 12 ? "Bom dia" : h >= 12 && h < 18 ? "Boa tarde" : "Boa noite";
+}
+let greeted = false;
+async function greet() {
+  if (greeted) { keepListening(200); return; }
+  greeted = true;
+  const nome = (prefs.callName || "").trim();
+  const text = `${saudacao()}${nome ? ", " + nome : ""}. Todos os sistemas estão online. Em que posso ajudar?`;
+  addMessage("model", text);
+  if (recog) recog.abort();
+  await speak(text);
+  if (state === "speaking" || state === "thinking") setState("idle");
+  if (SR && prefs.handsFree) { paused = false; startListening(); }
+}
+
+// Campo "Como devo te chamar" nas configurações
+(() => {
+  const field = document.createElement("label");
+  field.className = "field";
+  field.innerHTML = `<span>Como a Evora te chama</span><input type="text" id="callName" maxlength="40" />`;
+  els.settings.insertBefore(field, els.settings.querySelector(".field"));
+  const input = field.querySelector("input");
+  input.value = prefs.callName || "";
+  input.style.cssText = "background:#071427;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit";
+  input.addEventListener("change", () => { prefs.callName = input.value.trim(); savePrefs(); });
+})();
+
+// Uma Evora por vez: se outra janela abrir (ex.: novas palmas), esta se recolhe.
+const evoraChannel = "BroadcastChannel" in window ? new BroadcastChannel("evora") : null;
+evoraChannel?.postMessage({ type: "takeover", at: Date.now() });
+if (evoraChannel) {
+  evoraChannel.onmessage = (e) => {
+    if (e.data?.type !== "takeover") return;
+    paused = true;
+    clearTimeout(loopTimer);
+    if (recog) recog.abort();
+    stopSpeaking();
+    setState("idle", "EM OUTRA JANELA");
+    try { window.close(); } catch { /* janela aberta pelo usuário: não fecha */ }
+  };
+}
+
+// ── Inicialização (como no vídeo): logo, anéis e checagem dos sistemas ───────
+const wakeByClap = new URLSearchParams(location.search).get("wake") === "palmas";
+if (wakeByClap) window.history.replaceState(null, "", location.pathname);
+
+function bootSequence() {
+  return new Promise((resolve) => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return resolve();
+    const el = document.createElement("div");
+    el.className = "boot";
+    el.innerHTML = `
+      <div class="boot-core">
+        <svg class="boot-rings" viewBox="0 0 200 200" aria-hidden="true">
+          <circle cx="100" cy="100" r="92" class="r1"/><circle cx="100" cy="100" r="78" class="r2"/>
+          <circle cx="100" cy="100" r="64" class="r3"/>
+          <path d="M60 70h80L100 140z" class="tri"/><path d="M82 84h36l-18 30z" class="tri-in"/>
+        </svg>
+        <div class="boot-name">EVORA</div>
+        <div class="boot-sub">Assistente de inteligência artificial pessoal</div>
+        <ul class="boot-log"></ul>
+        <div class="boot-bar"><i></i></div>
+      </div>`;
+    document.body.appendChild(el);
+    const log = el.querySelector(".boot-log");
+    const steps = ["Inicializando núcleo", "Carregando módulos", "Conectando serviços", "Calibrando voz", "Sistemas online"];
+    steps.forEach((txt, i) => setTimeout(() => {
+      const li = document.createElement("li");
+      li.innerHTML = `<b>${i === steps.length - 1 ? "●" : "✓"}</b> ${txt.toUpperCase()}`;
+      if (i === steps.length - 1) li.className = "ok";
+      log.appendChild(li);
+    }, 500 + i * 380));
+    setTimeout(() => el.classList.add("out"), 2700);
+    setTimeout(() => { el.remove(); resolve(); }, 3300);
+  });
+}
+
+// Pode falar sem um toque? (sim quando aberta pelas palmas, no perfil próprio do Chrome)
+async function canAutoplay() {
+  try {
+    const ctx = ensureAudio();
+    if (!ctx) return false;
+    if (ctx.state !== "running") await Promise.race([ctx.resume(), new Promise((r) => setTimeout(r, 400))]);
+    return ctx.state === "running";
+  } catch { return false; }
+}
+
+bootSequence().then(() => {
+  const loginOpen = () => Boolean(document.getElementById("login"));
+  const go = async () => {
+    // Aberta pelas palmas (perfil próprio do Chrome), o som já vem liberado:
+    // ela cumprimenta e começa a ouvir sozinha. Num navegador comum, o botão
+    // ATIVAR EVORA continua lá (o navegador exige um toque) e cumprimenta ao tocar.
+    if (await canAutoplay()) { arm(); paused = false; greet(); }
+  };
+  if (loginOpen()) {
+    // espera o login sumir
+    const iv = setInterval(() => { if (!loginOpen()) { clearInterval(iv); go(); } }, 300);
+  } else go();
+});

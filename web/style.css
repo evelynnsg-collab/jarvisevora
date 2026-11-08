@@ -273,3 +273,37 @@ body.mobile .settings { top: auto; bottom: 80px; transform: translateX(-50%); }
 .conn-actions a.ghost { display: inline-block; text-decoration: none; }
 .conn-item + .conn-item { margin-top: 12px; }
 .conn-actions { margin-bottom: 4px; }
+
+/* ── Inicialização ─────────────────────────────────────────────────────── */
+.boot {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 45%, #04162c 0%, #01060e 70%);
+  transition: opacity .6s ease;
+}
+.boot.out { opacity: 0; pointer-events: none; }
+.boot-core { display: grid; justify-items: center; gap: 10px; text-align: center; }
+.boot-rings { width: min(34vmin, 260px); height: auto; overflow: visible; filter: drop-shadow(0 0 12px rgba(83,224,255,.7)); }
+.boot-rings circle, .boot-rings path { fill: none; stroke: #53e0ff; stroke-linecap: round; }
+.boot-rings .r1 { stroke-width: 1.2; stroke-dasharray: 8 6; opacity: .5; transform-origin: 100px 100px; animation: bootSpin 6s linear infinite, bootDraw 1.2s ease-out both; }
+.boot-rings .r2 { stroke-width: 2.4; stroke-dasharray: 360 130; transform-origin: 100px 100px; animation: bootSpinR 3s linear infinite, bootDraw 1s .15s ease-out both; }
+.boot-rings .r3 { stroke-width: 1; opacity: .7; stroke-dasharray: 402; animation: bootDraw 1s .3s ease-out both; }
+.boot-rings .tri { stroke-width: 3; stroke-linejoin: round; stroke-dasharray: 260; animation: bootDraw .9s .5s ease-out both; }
+.boot-rings .tri-in { fill: #53e0ff; stroke: none; opacity: 0; animation: bootFade .4s 1.2s ease-out forwards; }
+.boot-name {
+  font: 800 clamp(30px, 6vmin, 56px)/1 var(--hud); letter-spacing: .32em; padding-left: .32em; color: #eefaff;
+  text-shadow: 0 0 14px #53e0ff, 0 0 34px rgba(83,224,255,.6);
+  opacity: 0; animation: bootName .8s .9s ease-out forwards;
+}
+.boot-sub { font: 600 11px/1 var(--label); letter-spacing: .42em; color: #8fb2c9; text-transform: uppercase; opacity: 0; animation: bootFade .6s 1.3s forwards; }
+.boot-log { list-style: none; margin: 14px 0 0; padding: 0; min-height: 110px; font: 600 12px/1.9 var(--label); letter-spacing: .2em; color: #8fb2c9; text-align: left; }
+.boot-log li { animation: bootFade .25s ease-out both; }
+.boot-log b { color: #53e0ff; margin-right: 8px; }
+.boot-log li.ok, .boot-log li.ok b { color: #5dff9c; }
+.boot-bar { width: min(52vmin, 320px); height: 3px; border-radius: 2px; background: rgba(83,224,255,.15); overflow: hidden; }
+.boot-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2fb6e6, #9ff3ff); box-shadow: 0 0 10px #53e0ff; animation: bootBar 2.4s .3s ease-in-out forwards; }
+@keyframes bootDraw { from { stroke-dashoffset: 500; opacity: 0; } to { stroke-dashoffset: 0; } }
+@keyframes bootSpin { to { transform: rotate(360deg); } }
+@keyframes bootSpinR { to { transform: rotate(-360deg); } }
+@keyframes bootFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes bootName { from { opacity: 0; letter-spacing: .9em; filter: blur(6px); } to { opacity: 1; letter-spacing: .32em; filter: none; } }
+@keyframes bootBar { to { width: 100%; } }

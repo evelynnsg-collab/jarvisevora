@@ -50,3 +50,16 @@ Validação desta versão: renderização real do holograma com Qt em diferentes
 fases e volumes, sintaxe Python, seleção de entradas simuladas, fechamento
 de entrada ocupada e fallback para webcam/monitor. Reprodução de voz e
 conexão/desconexão dos dispositivos físicos exigem teste no seu Windows.
+
+================================================================
+ABRIR A EVORA COM PALMAS
+================================================================
+1. De dois cliques em ATIVAR_PALMAS.bat (uma vez so).
+2. Pronto: bata DUAS palmas e a Evora abre em tela cheia dizendo
+   "Bom dia / Boa tarde / Boa noite, Senhora Evelyn".
+   - Ela passa a iniciar sozinha sempre que o PC ligar.
+   - Na primeira vez, entre com sua senha na janela que abrir.
+   - Teste o microfone: python evora_palmas.py --teste
+   - Pegando palma demais ou de menos? use --sensibilidade 3 (mais
+     exigente) ou 7 (mais sensivel) no atalho.
+   - Para desligar: DESATIVAR_PALMAS.bat
