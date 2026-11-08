@@ -1527,5 +1527,19 @@ setInterval(() => checkMail(false), 3 * 60 * 1000);
     login: `Entre na Evora antes de conectar o ${label}.`,
     error: `Não consegui concluir a conexão com o ${label}. Tente de novo.`,
   }[v];
-  if (msg) addMessage(v === "ok" ? "system" : "system error", msg);
+  // Códigos da Microsoft mais comuns, em português
+  const code = q.get("code") || "";
+  const hints = {
+    AADSTS7000215: "O segredo (MS_CLIENT_SECRET) está errado. No Entra, em Certificados e segredos, crie um novo e copie a coluna VALOR (não o \u201cID do segredo\u201d). Troque no Vercel e faça Reimplantar.",
+    AADSTS7000222: "O segredo do cliente expirou. Crie um novo no Entra e troque no Vercel.",
+    AADSTS700016: "O MS_CLIENT_ID não corresponde ao app Evora, ou o app não aceita contas pessoais. Confira o ID do aplicativo (cliente) e os \u201cTipos de conta suportados\u201d.",
+    AADSTS50011: "O endereço de retorno não bate. No Entra, em Authentication, a plataforma Web precisa ter https://jarvisevora-web.vercel.app/api/microsoft/callback.",
+    AADSTS50020: "Essa conta não é aceita pelo app. Em \u201cTipos de conta suportados\u201d, escolha uma opção que inclua contas pessoais da Microsoft.",
+    AADSTS50194: "O app foi criado só para um diretório. Em Autenticação → Tipos de conta suportados, inclua contas pessoais da Microsoft.",
+    AADSTS65001: "Faltou aceitar as permissões. Tente conectar de novo e clique em Aceitar.",
+    AADSTS54005: "O código de autorização já foi usado. Tente conectar de novo.",
+    STATE: "A conexão demorou mais de 10 minutos ou abriu em outra aba. Tente de novo pela Evora.",
+  };
+  const full = msg && code ? `${msg}\n${hints[code] || "Código da Microsoft: " + code}` : msg;
+  if (full) addMessage(v === "ok" ? "system" : "system error", full);
 })();
