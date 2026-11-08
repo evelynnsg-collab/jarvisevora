@@ -4,6 +4,8 @@
 //   EVORA_TTS_VOICE   voz do Gemini; padrão "Charon" (masculina, grave e serena)
 //   EVORA_TTS_MODEL   modelo de voz; padrão "gemini-3.1-flash-tts-preview"
 
+import { requireSession } from "../lib/auth.js";
+
 const MAX_CHARS = 1500;
 
 const STYLE =
@@ -49,8 +51,7 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return fail(res, 405, "Método não permitido.");
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return fail(res, 503, "Sem chave do Gemini.");
-  const access = process.env.EVORA_ACCESS_CODE;
-  if (access && req.headers["x-evora-code"] !== access) return fail(res, 401, "Código de acesso inválido.");
+  if (!requireSession(req, res)) return;
 
   let text = "";
   try {

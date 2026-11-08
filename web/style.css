@@ -239,3 +239,35 @@ body.mobile .settings { top: auto; bottom: 80px; transform: translateX(-50%); }
   content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 8;
   background: repeating-linear-gradient(0deg, rgba(160,220,255,.018) 0 1px, transparent 1px 3px);
 }
+
+/* ── Login privado ─────────────────────────────────────────────────────── */
+.login {
+  position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+  background: rgba(1, 6, 14, .82); backdrop-filter: blur(10px);
+}
+.login-card {
+  display: grid; gap: 12px; width: min(340px, calc(100% - 40px)); padding: 28px 26px;
+  background: rgba(4, 16, 32, .95); border: 1px solid var(--cyan-dim); border-radius: 14px;
+  box-shadow: 0 0 40px rgba(83,224,255,.25); text-align: center;
+}
+.login-mark { font: 800 30px/1 var(--hud); letter-spacing: .2em; padding-left: .2em; color: #f2fbff; text-shadow: 0 0 16px var(--cyan); }
+.login-card p { margin: 0 0 6px; color: var(--muted); font: 600 12px/1 var(--label); letter-spacing: .3em; text-transform: uppercase; }
+.login-card input {
+  background: #071427; border: 1px solid var(--line); border-radius: 10px; color: var(--text);
+  padding: 12px 14px; font: 16px var(--body); outline: none; text-align: center;
+}
+.login-card input:focus { border-color: var(--cyan); }
+.login-card button {
+  background: var(--cyan); color: #021020; border: none; border-radius: 10px; padding: 12px;
+  font: 700 14px/1 var(--hud); letter-spacing: .18em; cursor: pointer;
+}
+.login-card button:disabled { opacity: .6; }
+.login-err { color: var(--red); min-height: 1em; }
+
+/* ── Conexões (dentro das configurações) ──────────────────────────────── */
+.conn { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+.conn h3 { margin: 0 0 10px; font: 700 12px/1 var(--hud); letter-spacing: .16em; color: var(--cyan); text-transform: uppercase; }
+.conn-row { display: flex; justify-content: space-between; align-items: center; font-size: 14px; margin-bottom: 8px; gap: 8px; }
+.conn-status { color: var(--muted); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+.conn-status.on { color: var(--green); }
+.conn-actions a.ghost { display: inline-block; text-decoration: none; }

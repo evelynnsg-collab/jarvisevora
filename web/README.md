@@ -21,7 +21,9 @@ Publicada no Vercel a partir desta pasta (`web/` como Root Directory).
 | `GEMINI_MODEL` | não | Modelo do Gemini. Padrão: `gemini-flash-latest` |
 | `EVORA_TTS_VOICE` | não | Voz do Gemini para o estilo Jarvis. Padrão: `Charon`. Outras masculinas: `Orus`, `Iapetus`, `Algenib` |
 | `EVORA_TTS_MODEL` | não | Modelo de voz. Padrão: `gemini-3.1-flash-tts-preview` |
-| `EVORA_ACCESS_CODE` | não | Se definida, o site pede esse código antes de responder (evita que outras pessoas gastem sua cota) |
+| `EVORA_PASSWORD` | recomendada | Senha do login privado. Sem ela, qualquer pessoa com o link usa a Evora (e veria seus e-mails) |
+| `EVORA_SECRET` | não | Texto aleatório longo para assinar a sessão e criptografar o token do Google. Se faltar, é derivado da senha |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | para o Gmail | Credencial OAuth "Aplicativo da Web" do Google Cloud, com redirect `https://SEU-DOMINIO/api/google/callback` |
 
 \* Precisa de pelo menos uma das duas chaves (Gemini ou Groq).
 
@@ -31,3 +33,10 @@ Depois de criar ou mudar uma variável, faça um **Redeploy** para ela valer.
 
 A versão web conversa e pesquisa na internet, mas não controla o computador (abrir apps,
 arquivos, mensagens, tela, câmera). Isso continua sendo da Evora de desktop (`main.py`).
+
+## Gmail (somente leitura)
+
+- Conecte em Configurações → Conexões → **Conectar Gmail**. Permissão pedida: `gmail.readonly` (ler; nunca envia, apaga ou marca).
+- O token fica **criptografado num cookie HttpOnly** do seu navegador (sem banco de dados). Desconectar revoga o acesso no Google.
+- Quando a pergunta é sobre e-mail, os últimos 2 dias da caixa de entrada entram na conversa **só pelo Groq** (o Gemini gratuito pode usar dados para treinar).
+- Com o site aberto, a cada 3 minutos ela verifica e-mails novos e avisa.

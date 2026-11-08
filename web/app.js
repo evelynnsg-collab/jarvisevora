@@ -449,10 +449,9 @@ async function send(text) {
       history.pop();
       store.set("evora.history", history);
       els.log.lastElementChild?.remove();
-      const code = window.prompt("Esta Evora é protegida. Digite o código de acesso:");
       busy = false;
-      if (code) { accessCode = code.trim(); store.set("evora.code", accessCode); return send(text); }
       setState("idle");
+      showLogin(() => send(text));
       return;
     }
     if (!res.ok) {
@@ -859,7 +858,7 @@ fetch("/api/chat")
     refreshSystem();
     if (!info.configured) {
       setState("offline");
-      addMessage("system error", "A Evora ainda não tem a chave do Gemini. Adicione GEMINI_API_KEY nas variáveis de ambiente do projeto no Vercel e faça um novo deploy.");
+      addMessage("system error", "A Evora ainda não tem chave de IA. Adicione GROQ_API_KEY ou GEMINI_API_KEY nas variáveis de ambiente do projeto no Vercel e faça um novo deploy.");
     } else {
       setState("idle");
     }
@@ -1370,4 +1369,154 @@ const fx = (() => {
   window.addEventListener("resize", layout);
   if (typeof mq !== "undefined") mq.addEventListener("change", layout);
   layout();
+})();
+
+// ── Login privado ──────────────────────────────────────────────────────────
+function showLogin(after) {
+  if (document.getElementById("login")) return;
+  document.getElementById("activate")?.remove();
+  const wrap = document.createElement("div");
+  wrap.id = "login";
+  wrap.className = "login";
+  wrap.innerHTML = `
+    <form class="login-card" autocomplete="on">
+      <div class="login-mark">EVORA</div>
+      <p>Acesso privado</p>
+      <input type="password" name="password" autocomplete="current-password" placeholder="Senha" aria-label="Senha" required />
+      <button type="submit">ENTRAR</button>
+      <small class="login-err" role="alert"></small>
+    </form>`;
+  document.body.appendChild(wrap);
+  const form = wrap.querySelector("form");
+  const input = form.querySelector("input");
+  const err = form.querySelector(".login-err");
+  setTimeout(() => input.focus(), 50);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    err.textContent = "";
+    form.querySelector("button").disabled = true;
+    try {
+      const r = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: input.value }) });
+      if (!r.ok) { err.textContent = "Senha incorreta."; input.select(); return; }
+      wrap.remove();
+      afterLogin();
+      after?.();
+    } catch {
+      err.textContent = "Sem conexão. Tente de novo.";
+    } finally {
+      form.querySelector("button").disabled = false;
+    }
+  });
+}
+
+let loggedIn = false;
+function afterLogin() {
+  loggedIn = true;
+  checkMail(true);
+}
+
+fetch("/api/auth")
+  .then((r) => r.json())
+  .then((a) => {
+    if (a.locked && !a.loggedIn) showLogin();
+    else afterLogin();
+  })
+  .catch(() => afterLogin());
+
+// ── Conexão com o Gmail ───────────────────────────────────────────────────
+const mailState = { configured: false, connected: false, account: "", since: 0, unread: 0 };
+const connBox = document.createElement("div");
+connBox.className = "conn";
+connBox.innerHTML = `<h3>Conexões</h3><div class="conn-row"><span class="conn-name">Gmail</span><span class="conn-status" id="gmailStatus">verificando…</span></div><div class="conn-actions" id="gmailActions"></div>`;
+els.settings.insertBefore(connBox, $("supportHint"));
+
+function renderConn() {
+  const st = $("gmailStatus"), act = $("gmailActions");
+  if (!mailState.configured) {
+    st.textContent = "não configurado";
+    act.innerHTML = `<small class="hint">Falta configurar GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no Vercel.</small>`;
+  } else if (mailState.connected) {
+    st.textContent = `conectado${mailState.account ? " · " + mailState.account : ""}`;
+    st.classList.add("on");
+    act.innerHTML = `<button class="ghost danger" type="button" id="gmailOff">Desconectar</button>`;
+    $("gmailOff").addEventListener("click", async () => {
+      await fetch("/api/mail", { method: "DELETE" });
+      Object.assign(mailState, { connected: false, account: "" });
+      st.classList.remove("on");
+      renderConn();
+      addMessage("system", "Gmail desconectado e acesso revogado no Google.");
+    });
+  } else {
+    st.textContent = "desconectado";
+    st.classList.remove("on");
+    act.innerHTML = `<a class="ghost" href="/api/google/start">Conectar Gmail (somente leitura)</a>`;
+  }
+}
+
+async function checkMail(first = false) {
+  if (!loggedIn) return;
+  try {
+    const url = mailState.connected && mailState.since ? `/api/mail?since=${mailState.since}` : "/api/mail";
+    const r = await fetch(url);
+    if (r.status === 401) return;
+    const d = await r.json();
+    const wasConnected = mailState.connected;
+    mailState.configured = Boolean(d.configured);
+    mailState.connected = Boolean(d.connected);
+    mailState.account = d.account || mailState.account;
+    renderConn();
+    if (!d.connected) {
+      if (wasConnected && d.reason === "EXPIRED") addMessage("system error", "A conexão com o Gmail expirou. Reconecte em Configurações.");
+      return;
+    }
+    if (!mailState.since || first) {
+      mailState.since = d.now || Date.now();
+      mailState.unread = d.unread || 0;
+      if (first && d.unread) addMessage("system", `📧 ${d.unread} e-mail${d.unread > 1 ? "s" : ""} não lido${d.unread > 1 ? "s" : ""} nos últimos 2 dias. Diga "resuma meus e-mails".`);
+      return;
+    }
+    mailState.since = d.now || Date.now();
+    const fresh = (d.mails || []).sort((a, b) => a.date - b.date);
+    if (fresh.length) announceMail(fresh);
+  } catch { /* sem rede: tenta no próximo ciclo */ }
+}
+
+const mailQueue = [];
+function announceMail(list) {
+  for (const m of list) {
+    addMessage("system", `📧 Novo e-mail de ${m.from}: ${m.subject}`);
+  }
+  const first = list[list.length - 1];
+  const phrase = list.length === 1
+    ? `Chegou um e-mail de ${first.from}, sobre ${first.subject}.`
+    : `Chegaram ${list.length} e-mails novos. O mais recente é de ${first.from}, sobre ${first.subject}.`;
+  mailQueue.push(phrase);
+  flushMailVoice();
+}
+async function flushMailVoice() {
+  // não interrompe a conversa: só fala quando a Evora está livre
+  if (!mailQueue.length || !armed) return;
+  if (busy || state === "speaking" || state === "thinking") { setTimeout(flushMailVoice, 3000); return; }
+  const phrase = mailQueue.splice(0).join(" ");
+  if (recog) recog.abort();
+  await speak(phrase);
+  if (state === "speaking" || state === "thinking") setState("idle");
+  keepListening(300);
+}
+setInterval(() => checkMail(false), 3 * 60 * 1000);
+
+// Volta da autorização do Google
+(() => {
+  const g = new URLSearchParams(location.search).get("google");
+  if (!g) return;
+  window.history.replaceState(null, "", location.pathname);
+  const msg = {
+    ok: "Gmail conectado. Pode perguntar: “o que chegou de importante?”",
+    denied: "O Google não autorizou. Se foi você que cancelou, tente de novo. Se apareceu “bloqueado pelo administrador”, o TI da empresa precisa liberar o app.",
+    norefresh: "O Google não enviou a permissão de acesso contínuo. Remova a Evora em myaccount.google.com/permissions e conecte de novo.",
+    noconfig: "Falta configurar GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no Vercel.",
+    login: "Entre na Evora antes de conectar o Gmail.",
+    error: "Não consegui concluir a conexão com o Google. Tente de novo.",
+  }[g];
+  if (msg) addMessage(g === "ok" ? "system" : "system error", msg);
 })();
