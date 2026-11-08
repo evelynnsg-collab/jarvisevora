@@ -1423,74 +1423,81 @@ fetch("/api/auth")
   })
   .catch(() => afterLogin());
 
-// ── Conexão com o Gmail ───────────────────────────────────────────────────
-const mailState = { configured: false, connected: false, account: "", since: 0, unread: 0 };
+// ── Contas de e-mail (Gmail e Hotmail) ────────────────────────────────────
+const ACCOUNTS = [
+  { id: "google", label: "Gmail", start: "/api/google/start", env: "GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET" },
+  { id: "microsoft", label: "Hotmail / Outlook", start: "/api/microsoft/start", env: "MS_CLIENT_ID e MS_CLIENT_SECRET" },
+];
+const mailState = { status: {}, connected: false, since: 0 };
 const connBox = document.createElement("div");
 connBox.className = "conn";
-connBox.innerHTML = `<h3>Conexões</h3><div class="conn-row"><span class="conn-name">Gmail</span><span class="conn-status" id="gmailStatus">verificando…</span></div><div class="conn-actions" id="gmailActions"></div>`;
+connBox.innerHTML = `<h3>Conexões</h3>` + ACCOUNTS.map((a) => `
+  <div class="conn-item" data-id="${a.id}">
+    <div class="conn-row"><span class="conn-name">${a.label}</span><span class="conn-status">verificando…</span></div>
+    <div class="conn-actions"></div>
+  </div>`).join("");
 els.settings.insertBefore(connBox, $("supportHint"));
 
 function renderConn() {
-  const st = $("gmailStatus"), act = $("gmailActions");
-  if (!mailState.configured) {
-    st.textContent = "não configurado";
-    act.innerHTML = `<small class="hint">Falta configurar GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no Vercel.</small>`;
-  } else if (mailState.connected) {
-    st.textContent = `conectado${mailState.account ? " · " + mailState.account : ""}`;
-    st.classList.add("on");
-    act.innerHTML = `<button class="ghost danger" type="button" id="gmailOff">Desconectar</button>`;
-    $("gmailOff").addEventListener("click", async () => {
-      await fetch("/api/mail", { method: "DELETE" });
-      Object.assign(mailState, { connected: false, account: "" });
-      st.classList.remove("on");
-      renderConn();
-      addMessage("system", "Gmail desconectado e acesso revogado no Google.");
-    });
-  } else {
-    st.textContent = "desconectado";
-    st.classList.remove("on");
-    act.innerHTML = `<a class="ghost" href="/api/google/start">Conectar Gmail (somente leitura)</a>`;
+  for (const a of ACCOUNTS) {
+    const item = connBox.querySelector(`[data-id="${a.id}"]`);
+    const st = item.querySelector(".conn-status"), act = item.querySelector(".conn-actions");
+    const s = mailState.status[a.id] || {};
+    st.classList.toggle("on", Boolean(s.connected));
+    if (!s.configured) {
+      st.textContent = "não configurado";
+      act.innerHTML = `<small class="hint">Falta ${a.env} no Vercel.</small>`;
+    } else if (s.connected) {
+      st.textContent = `conectado${s.account ? " · " + s.account : ""}`;
+      act.innerHTML = `<button class="ghost danger" type="button">Desconectar</button>`;
+      act.querySelector("button").onclick = async () => {
+        await fetch(`/api/mail?provider=${a.id}`, { method: "DELETE" });
+        mailState.status[a.id] = { configured: true, connected: false };
+        renderConn();
+        addMessage("system", `${a.label} desconectado.`);
+      };
+    } else {
+      st.textContent = s.reason === "EXPIRED" ? "expirou — reconecte" : "desconectado";
+      act.innerHTML = `<a class="ghost" href="${a.start}">Conectar ${a.label} (somente leitura)</a>`;
+    }
   }
 }
 
 async function checkMail(first = false) {
   if (!loggedIn) return;
   try {
-    const url = mailState.connected && mailState.since ? `/api/mail?since=${mailState.since}` : "/api/mail";
+    const url = mailState.connected && mailState.since && !first ? `/api/mail?since=${mailState.since}` : "/api/mail";
     const r = await fetch(url);
     if (r.status === 401) return;
     const d = await r.json();
-    const wasConnected = mailState.connected;
-    mailState.configured = Boolean(d.configured);
+    const before = mailState.status;
+    mailState.status = d.status || {};
     mailState.connected = Boolean(d.connected);
-    mailState.account = d.account || mailState.account;
     renderConn();
-    if (!d.connected) {
-      if (wasConnected && d.reason === "EXPIRED") addMessage("system error", "A conexão com o Gmail expirou. Reconecte em Configurações.");
-      return;
+    for (const a of ACCOUNTS) {
+      if (before[a.id]?.connected && mailState.status[a.id]?.reason === "EXPIRED") {
+        addMessage("system error", `A conexão com o ${a.label} expirou. Reconecte em Configurações.`);
+      }
     }
-    if (!mailState.since || first) {
+    if (!d.connected) return;
+    if (first || !mailState.since) {
       mailState.since = d.now || Date.now();
-      mailState.unread = d.unread || 0;
       if (first && d.unread) addMessage("system", `📧 ${d.unread} e-mail${d.unread > 1 ? "s" : ""} não lido${d.unread > 1 ? "s" : ""} nos últimos 2 dias. Diga "resuma meus e-mails".`);
       return;
     }
     mailState.since = d.now || Date.now();
-    const fresh = (d.mails || []).sort((a, b) => a.date - b.date);
+    const fresh = (d.mails || []).sort((x, y) => x.date - y.date);
     if (fresh.length) announceMail(fresh);
   } catch { /* sem rede: tenta no próximo ciclo */ }
 }
 
 const mailQueue = [];
 function announceMail(list) {
-  for (const m of list) {
-    addMessage("system", `📧 Novo e-mail de ${m.from}: ${m.subject}`);
-  }
-  const first = list[list.length - 1];
-  const phrase = list.length === 1
-    ? `Chegou um e-mail de ${first.from}, sobre ${first.subject}.`
-    : `Chegaram ${list.length} e-mails novos. O mais recente é de ${first.from}, sobre ${first.subject}.`;
-  mailQueue.push(phrase);
+  for (const m of list) addMessage("system", `📧 ${m.box}: novo e-mail de ${m.from} — ${m.subject}`);
+  const last = list[list.length - 1];
+  mailQueue.push(list.length === 1
+    ? `Chegou um e-mail de ${last.from}, sobre ${last.subject}.`
+    : `Chegaram ${list.length} e-mails novos. O mais recente é de ${last.from}, sobre ${last.subject}.`);
   flushMailVoice();
 }
 async function flushMailVoice() {
@@ -1505,18 +1512,20 @@ async function flushMailVoice() {
 }
 setInterval(() => checkMail(false), 3 * 60 * 1000);
 
-// Volta da autorização do Google
+// Volta da autorização (Google ou Microsoft)
 (() => {
-  const g = new URLSearchParams(location.search).get("google");
-  if (!g) return;
+  const q = new URLSearchParams(location.search);
+  const [key, label] = q.get("google") ? ["google", "Gmail"] : q.get("ms") ? ["ms", "Hotmail"] : [];
+  if (!key) return;
+  const v = q.get(key);
   window.history.replaceState(null, "", location.pathname);
   const msg = {
-    ok: "Gmail conectado. Pode perguntar: “o que chegou de importante?”",
-    denied: "O Google não autorizou. Se foi você que cancelou, tente de novo. Se apareceu “bloqueado pelo administrador”, o TI da empresa precisa liberar o app.",
-    norefresh: "O Google não enviou a permissão de acesso contínuo. Remova a Evora em myaccount.google.com/permissions e conecte de novo.",
-    noconfig: "Falta configurar GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET no Vercel.",
-    login: "Entre na Evora antes de conectar o Gmail.",
-    error: "Não consegui concluir a conexão com o Google. Tente de novo.",
-  }[g];
-  if (msg) addMessage(g === "ok" ? "system" : "system error", msg);
+    ok: `${label} conectado. Pode perguntar: “o que chegou de importante?”`,
+    denied: `A autorização do ${label} foi cancelada ou recusada. Tente de novo.`,
+    norefresh: `O ${label} não enviou a permissão de acesso contínuo. Remova a Evora das permissões da sua conta e conecte de novo.`,
+    noconfig: `Falta configurar as chaves do ${label} no Vercel.`,
+    login: `Entre na Evora antes de conectar o ${label}.`,
+    error: `Não consegui concluir a conexão com o ${label}. Tente de novo.`,
+  }[v];
+  if (msg) addMessage(v === "ok" ? "system" : "system error", msg);
 })();

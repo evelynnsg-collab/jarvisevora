@@ -23,6 +23,8 @@ Publicada no Vercel a partir desta pasta (`web/` como Root Directory).
 | `EVORA_TTS_MODEL` | não | Modelo de voz. Padrão: `gemini-3.1-flash-tts-preview` |
 | `EVORA_PASSWORD` | recomendada | Senha do login privado. Sem ela, qualquer pessoa com o link usa a Evora (e veria seus e-mails) |
 | `EVORA_SECRET` | não | Texto aleatório longo para assinar a sessão e criptografar o token do Google. Se faltar, é derivado da senha |
+| `MS_CLIENT_ID` / `MS_CLIENT_SECRET` | para o Hotmail | Registro de app no Microsoft Entra (contas pessoais), com redirect Web `https://SEU-DOMINIO/api/microsoft/callback` e permissões delegadas `Mail.Read`, `User.Read`, `offline_access` |
+| `MS_TENANT` | não | Padrão `common`. Use `consumers` se o app aceitar só contas pessoais |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | para o Gmail | Credencial OAuth "Aplicativo da Web" do Google Cloud, com redirect `https://SEU-DOMINIO/api/google/callback` |
 
 \* Precisa de pelo menos uma das duas chaves (Gemini ou Groq).
@@ -34,9 +36,10 @@ Depois de criar ou mudar uma variável, faça um **Redeploy** para ela valer.
 A versão web conversa e pesquisa na internet, mas não controla o computador (abrir apps,
 arquivos, mensagens, tela, câmera). Isso continua sendo da Evora de desktop (`main.py`).
 
-## Gmail (somente leitura)
+## E-mail: Gmail e Hotmail (somente leitura)
 
-- Conecte em Configurações → Conexões → **Conectar Gmail**. Permissão pedida: `gmail.readonly` (ler; nunca envia, apaga ou marca).
+- Conecte em Configurações → Conexões. Permissões pedidas: `gmail.readonly` (Gmail) e `Mail.Read` (Hotmail) — só ler; nunca envia, apaga ou marca.
+- As duas contas podem ficar conectadas ao mesmo tempo; a Evora junta as caixas de entrada.
 - O token fica **criptografado num cookie HttpOnly** do seu navegador (sem banco de dados). Desconectar revoga o acesso no Google.
 - Quando a pergunta é sobre e-mail, os últimos 2 dias da caixa de entrada entram na conversa **só pelo Groq** (o Gemini gratuito pode usar dados para treinar).
 - Com o site aberto, a cada 3 minutos ela verifica e-mails novos e avisa.

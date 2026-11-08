@@ -271,3 +271,5 @@ body.mobile .settings { top: auto; bottom: 80px; transform: translateX(-50%); }
 .conn-status { color: var(--muted); font-size: 12px; text-align: right; overflow-wrap: anywhere; }
 .conn-status.on { color: var(--green); }
 .conn-actions a.ghost { display: inline-block; text-decoration: none; }
+.conn-item + .conn-item { margin-top: 12px; }
+.conn-actions { margin-bottom: 4px; }
