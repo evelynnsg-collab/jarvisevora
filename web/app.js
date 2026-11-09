@@ -1204,27 +1204,7 @@ const fx = (() => {
     glowDot(657, 452, 30 + lvl * 26, "120,220,255", Math.min(0.85, core));
     glowDot(657, 452, 12 + lvl * 8, "235,252,255", Math.min(0.9, core * 0.9));
 
-    // ── módulos ativos acendendo conforme o que a Evora está fazendo
     searchFlash = Math.max(0, searchFlash - dt * 0.35);
-    const active = [
-      speaking || thinking, thinking, false, typeof loopActive === "function" && loopActive(),
-      searchFlash > 0.02, speaking, listening,
-    ];
-    const rows = [148, 172, 196, 222, 247, 272, 296];
-    rows.forEach((y, i) => {
-      const cx = 1183 + i * 1.6;
-      const on = active[i];
-      const pulse = 0.5 + 0.5 * Math.sin(t * 5 + i);
-      if (on) {
-        const g = ctx.createLinearGradient(P(1170), 0, P(1362), 0);
-        g.addColorStop(0, `rgba(80,255,160,${0.07 + pulse * 0.06})`);
-        g.addColorStop(1, "rgba(80,255,160,0)");
-        ctx.fillStyle = g; ctx.fillRect(P(1170), P(y - 10), P(192), P(20));
-        glowDot(cx, y, 13, "90,255,160", 0.3 + pulse * 0.25);
-      } else {
-        glowDot(cx, y, 9, "90,255,160", 0.08 + 0.05 * Math.sin(t * 1.3 + i * 0.9));
-      }
-    });
 
     // ── poeira de luz pela tela toda
     for (const d of dust) {
