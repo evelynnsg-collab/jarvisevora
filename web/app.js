@@ -1647,3 +1647,51 @@ bootSequence().then(() => {
     const iv = setInterval(() => { if (!loginOpen()) { clearInterval(iv); go(); } }, 300);
   } else go();
 });
+
+// ── Instalar como app ──────────────────────────────────────────────────────
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+const isInstalled = () =>
+  window.matchMedia("(display-mode: fullscreen)").matches ||
+  window.matchMedia("(display-mode: standalone)").matches ||
+  window.navigator.standalone === true;
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+let installPrompt = null;
+const installBox = document.createElement("div");
+installBox.className = "conn install";
+els.settings.insertBefore(installBox, connBox);
+function renderInstall() {
+  if (isInstalled()) {
+    installBox.innerHTML = `<h3>Aplicativo</h3><p class="hint" style="margin:0">A Evora está instalada como app neste aparelho. ✓</p>`;
+    return;
+  }
+  if (installPrompt) {
+    installBox.innerHTML = `<h3>Aplicativo</h3><button class="ghost" type="button" id="installBtn">⬇ Instalar a Evora como app</button>`;
+    $("installBtn").onclick = async () => {
+      installPrompt.prompt();
+      const choice = await installPrompt.userChoice.catch(() => null);
+      installPrompt = null;
+      if (choice?.outcome === "accepted") addMessage("system", "Evora instalada. Ela agora abre pelo ícone, em tela cheia.");
+      renderInstall();
+    };
+    return;
+  }
+  installBox.innerHTML = isIOS
+    ? `<h3>Aplicativo</h3><p class="hint" style="margin:0">No iPhone: abra no <b>Safari</b>, toque em <b>Compartilhar</b> (quadrado com seta) → <b>Adicionar à Tela de Início</b>.</p>`
+    : `<h3>Aplicativo</h3><p class="hint" style="margin:0">Para instalar: no menu do navegador (⋮), escolha <b>Instalar app</b> ou <b>Adicionar à tela inicial</b>.</p>`;
+}
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; renderInstall(); });
+window.addEventListener("appinstalled", () => { installPrompt = null; renderInstall(); });
+renderInstall();
+
+// Atalho do ícone ("Resumir e-mails"): faz a pergunta depois de entrar
+(() => {
+  const ask = new URLSearchParams(location.search).get("ask");
+  if (!ask) return;
+  window.history.replaceState(null, "", location.pathname);
+  const wait = setInterval(() => {
+    if (loggedIn && !document.getElementById("login") && !document.querySelector(".boot")) { clearInterval(wait); send(ask); }
+  }, 500);
+})();

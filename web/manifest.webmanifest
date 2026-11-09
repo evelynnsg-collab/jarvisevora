@@ -1,0 +1,23 @@
+{
+  "name": "Evora — Assistente de IA pessoal",
+  "short_name": "Evora",
+  "description": "Sua assistente de inteligência artificial pessoal, por voz e texto.",
+  "id": "/",
+  "start_url": "/?source=app",
+  "scope": "/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "any",
+  "background_color": "#020812",
+  "theme_color": "#020812",
+  "lang": "pt-BR",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Resumir e-mails", "short_name": "E-mails", "url": "/?source=app&ask=resuma%20meus%20e-mails", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
